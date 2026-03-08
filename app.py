@@ -313,7 +313,7 @@ def cargar_silla():
 # =========================
 # Interfaz
 # =========================
-st.title("Calculadora de Aptitud Física")
+st.title("Calculadora de Condición Física")
 
 prueba = st.selectbox(
     "Seleccionar prueba",
@@ -409,4 +409,5 @@ elif prueba == "Levantarse de silla":
             st.write(f"**Grupo de edad utilizado:** {grupo}")
             st.write(f"**Referencia P50:** {p50_texto} repeticiones")
             st.write(f"**Interpretación clínica:** {interpretar_clinicamente(p_est, prueba)}")
+
 
