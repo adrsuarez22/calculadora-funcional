@@ -1,8 +1,6 @@
 import streamlit as st
 import pandas as pd
 import unicodedata
-import matplotlib
-matplotlib.use("Agg")
 
 st.set_page_config(page_title="Calculadora de Aptitud Física", layout="centered")
 
@@ -165,7 +163,7 @@ def interpretar_clinicamente(p, prueba):
         elif p < 25:
             return "Capacidad aeróbica por debajo de lo esperado. Sugiere margen claro de mejora funcional."
         elif p <= 75:
-            return "Capacidad aeróbica dentro de rango funcional esperado."
+            return "Capacidad aeróbica dentro del rango funcional esperado."
         else:
             return "Capacidad aeróbica por encima de lo esperado para su referencia."
 
@@ -255,26 +253,6 @@ def mostrar_semaforo(p):
         """,
         unsafe_allow_html=True
     )
-
-
-def graficar_percentiles(df_ref, col_percentil, col_valor, valor_medido, titulo_y):
-
-    graf = df_ref[[col_percentil, col_valor]].dropna().copy()
-    graf = graf.sort_values(by=col_percentil)
-
-    if graf.empty:
-        return
-
-    fig = plt.figure()
-
-    plt.plot(graf[col_percentil], graf[col_valor], marker="o")
-    plt.axhline(valor_medido, linestyle="--")
-
-    plt.xlabel("Percentil")
-    plt.ylabel(titulo_y)
-    plt.title("Curva de referencia")
-
-    st.pyplot(fig)
 
 
 # =========================
@@ -369,8 +347,6 @@ if prueba == "Caminata 6 minutos":
         st.write(f"**Referencia P50:** {p50_texto}")
         st.write(f"**Interpretación clínica:** {interpretar_clinicamente(p_est, prueba)}")
 
-        graficar_percentiles(ref, cols["percentil"], cols["resultado"], valor_medido, "Distancia (m)")
-
 elif prueba == "Fuerza prensión":
     df, cols = cargar_prension()
 
@@ -403,8 +379,6 @@ elif prueba == "Fuerza prensión":
             st.write(f"**Referencia P50:** {p50_texto}")
             st.write(f"**Interpretación clínica:** {interpretar_clinicamente(p_est, prueba)}")
 
-            graficar_percentiles(ref, cols["percentil"], cols["resultado"], fuerza_medida, "Fuerza (kg)")
-
 elif prueba == "Levantarse de silla":
     df, cols = cargar_silla()
 
@@ -435,8 +409,3 @@ elif prueba == "Levantarse de silla":
             st.write(f"**Grupo de edad utilizado:** {grupo}")
             st.write(f"**Referencia P50:** {p50_texto} repeticiones")
             st.write(f"**Interpretación clínica:** {interpretar_clinicamente(p_est, prueba)}")
-
-            graficar_percentiles(ref, cols["percentil"], cols["resultado"], repeticiones, "Repeticiones")
-
-
-
