@@ -1,5 +1,3 @@
-﻿Fuerza de prensión manual absoluta - formato normalizado,,,,,
-,,,,,
 sexo,edad_rango,percentil,fuerza_kg,unidad,fuente
 Hombre,20-24,5,33.9,kg,https://pmc.ncbi.nlm.nih.gov/articles/PMC11863340/
 Hombre,20-24,10,36.8,kg,https://pmc.ncbi.nlm.nih.gov/articles/PMC11863340/
@@ -375,3 +373,4 @@ Mujer,+100,70,14.9,kg,https://pmc.ncbi.nlm.nih.gov/articles/PMC11863340/
 Mujer,+100,80,16.5,kg,https://pmc.ncbi.nlm.nih.gov/articles/PMC11863340/
 Mujer,+100,90,18.7,kg,https://pmc.ncbi.nlm.nih.gov/articles/PMC11863340/
 Mujer,+100,95,20.6,kg,https://pmc.ncbi.nlm.nih.gov/articles/PMC11863340/
+
