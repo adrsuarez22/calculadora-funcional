@@ -70,22 +70,19 @@ def cargar_caminata():
     df = pd.read_csv("caminata_6min_long.csv")
     df = normalizar_columnas(df)
 
-    # Fallback por posición:
-    # col 0 = edad
-    # col 1 = altura
-    # col 2 = percentil
-    # col 3 = distancia
-    col_edad = buscar_columna(df, ["edad", "edad_anos", "anos", "age"], fallback_index=0)
-    col_altura = buscar_columna(df, ["altura", "altura_cm", "talla", "height"], fallback_index=1)
+    # Orden real del CSV:
+    # altura_cm, edad_anos, percentil, distancia_m, unidad, fuente
+    col_altura = buscar_columna(df, ["altura_cm", "altura", "talla", "height"], fallback_index=0)
+    col_edad = buscar_columna(df, ["edad_anos", "edad", "anos", "age"], fallback_index=1)
     col_percentil = buscar_columna(df, ["percentil", "percentil_ref", "p"], fallback_index=2)
-    col_resultado = buscar_columna(df, ["distancia", "distancia_m", "metros", "resultado"], fallback_index=3)
+    col_resultado = buscar_columna(df, ["distancia_m", "distancia", "metros", "resultado"], fallback_index=3)
 
-    df = convertir_numerico(df, [col_edad, col_altura, col_percentil, col_resultado])
-    df = df.dropna(subset=[col_edad, col_altura, col_percentil, col_resultado])
+    df = convertir_numerico(df, [col_altura, col_edad, col_percentil, col_resultado])
+    df = df.dropna(subset=[col_altura, col_edad, col_percentil, col_resultado])
 
     return df, {
-        "edad": col_edad,
         "altura": col_altura,
+        "edad": col_edad,
         "percentil": col_percentil,
         "resultado": col_resultado
     }
@@ -96,23 +93,20 @@ def cargar_prension():
     df = pd.read_csv("prension_manual_long.csv")
     df = normalizar_columnas(df)
 
-    # Fallback por posición:
-    # col 0 = edad
-    # col 1 = sexo
-    # col 2 = percentil
-    # col 3 = fuerza
-    col_edad = buscar_columna(df, ["edad", "edad_anos", "anos", "age"], fallback_index=0)
-    col_sexo = buscar_columna(df, ["sexo", "genero", "sex"], fallback_index=1)
+    # Orden real del CSV:
+    # sexo, edad_rango, percentil, fuerza_kg, unidad, fuente
+    col_sexo = buscar_columna(df, ["sexo", "genero", "sex"], fallback_index=0)
+    col_edad = buscar_columna(df, ["edad_rango", "edad", "edad_anos", "anos", "age"], fallback_index=1)
     col_percentil = buscar_columna(df, ["percentil", "percentil_ref", "p"], fallback_index=2)
-    col_resultado = buscar_columna(df, ["fuerza", "fuerza_kg", "kg", "prension", "prension_kg"], fallback_index=3)
+    col_resultado = buscar_columna(df, ["fuerza_kg", "fuerza", "kg", "prension", "prension_kg"], fallback_index=3)
 
-    df = convertir_numerico(df, [col_edad, col_percentil, col_resultado])
     df[col_sexo] = normalizar_sexo_serie(df[col_sexo])
-    df = df.dropna(subset=[col_edad, col_percentil, col_resultado])
+    df = convertir_numerico(df, [col_percentil, col_resultado])
+    df = df.dropna(subset=[col_percentil, col_resultado])
 
     return df, {
-        "edad": col_edad,
         "sexo": col_sexo,
+        "edad": col_edad,
         "percentil": col_percentil,
         "resultado": col_resultado
     }
@@ -123,38 +117,25 @@ def cargar_silla():
     df = pd.read_csv("silla_long.csv")
     df = normalizar_columnas(df)
 
-    columnas = list(df.columns)
-
-    # Posibles estructuras:
-    # A) sexo, grupoedad, percentil, repeticiones
-    # B) sexo, percentil, repeticiones
+    # Orden real del CSV:
+    # sexo, grupo_edad, edad_rango, n_muestra, percentil, valor_repeticiones, fuente
     col_sexo = buscar_columna(df, ["sexo", "genero", "sex"], fallback_index=0)
-    col_grupo = buscar_columna(df, ["grupoedad", "grupo_edad", "grupo", "ag"], fallback_index=1, obligatoria=False)
+    col_grupo = buscar_columna(df, ["grupo_edad", "grupoedad", "grupo", "ag"], fallback_index=1)
+    col_edad_rango = buscar_columna(df, ["edad_rango", "edad", "rango_edad"], fallback_index=2, obligatoria=False)
+    col_n = buscar_columna(df, ["n_muestra", "n", "muestra"], fallback_index=3, obligatoria=False)
+    col_percentil = buscar_columna(df, ["percentil", "percentil_ref", "p"], fallback_index=4)
+    col_resultado = buscar_columna(df, ["valor_repeticiones", "repeticiones", "resultado", "levantadas"], fallback_index=5)
 
-    # Detectar si la segunda columna realmente parece grupo AG1..AG5
-    if col_grupo is not None:
-        valores_grupo = df[col_grupo].astype(str).str.upper().str.strip()
-        if not valores_grupo.str.startswith("AG").any():
-            col_grupo = None
-
-    if col_grupo is not None:
-        col_percentil = buscar_columna(df, ["percentil", "percentil_ref", "p"], fallback_index=2)
-        col_resultado = buscar_columna(df, ["repeticiones", "resultado", "levantadas"], fallback_index=3)
-    else:
-        col_percentil = buscar_columna(df, ["percentil", "percentil_ref", "p"], fallback_index=1)
-        col_resultado = buscar_columna(df, ["repeticiones", "resultado", "levantadas"], fallback_index=2)
-
-    df = convertir_numerico(df, [col_percentil, col_resultado])
     df[col_sexo] = normalizar_sexo_serie(df[col_sexo])
-
-    if col_grupo is not None:
-        df[col_grupo] = df[col_grupo].astype(str).str.upper().str.strip()
-
+    df[col_grupo] = df[col_grupo].astype(str).str.strip().str.upper()
+    df = convertir_numerico(df, [col_percentil, col_resultado])
     df = df.dropna(subset=[col_percentil, col_resultado])
 
     return df, {
         "sexo": col_sexo,
         "grupo": col_grupo,
+        "edad_rango": col_edad_rango,
+        "n": col_n,
         "percentil": col_percentil,
         "resultado": col_resultado
     }
@@ -195,7 +176,7 @@ if prueba == "Caminata 6 minutos":
 
     edades = sorted(df[cols["edad"]].dropna().astype(int).unique().tolist())
     alturas = sorted(df[cols["altura"]].dropna().astype(int).unique().tolist())
-    percentiles = sorted(df[cols["percentil"]].dropna().astype(int).unique().tolist())
+    percentiles = sorted(df[cols["percentil"]].dropna().unique().tolist())
 
     edad = st.selectbox("Edad", edades)
     altura = st.selectbox("Altura (cm)", alturas)
@@ -216,18 +197,19 @@ if prueba == "Caminata 6 minutos":
 elif prueba == "Fuerza prensión":
     df, cols = cargar_prension()
 
-    edades = sorted(df[cols["edad"]].dropna().astype(int).unique().tolist())
-    percentiles = sorted(df[cols["percentil"]].dropna().astype(int).unique().tolist())
+    sexos = ["Hombre", "Mujer"]
+    edades = sorted(df[cols["edad"]].dropna().astype(str).unique().tolist())
+    percentiles = sorted(df[cols["percentil"]].dropna().unique().tolist())
 
-    sexo_ui = st.selectbox("Sexo", ["Hombre", "Mujer"])
+    sexo_ui = st.selectbox("Sexo", sexos)
     edad = st.selectbox("Edad", edades)
     percentil = st.selectbox("Percentil", percentiles)
 
     sexo = formatear_sexo_ui(sexo_ui)
 
     resultado = df[
-        (df[cols["edad"]] == edad) &
         (df[cols["sexo"]] == sexo) &
+        (df[cols["edad"]].astype(str) == str(edad)) &
         (df[cols["percentil"]] == percentil)
     ]
 
@@ -243,36 +225,21 @@ elif prueba == "Levantarse de silla":
     sexo_ui = st.selectbox("Sexo", ["Hombre", "Mujer"])
     sexo = formatear_sexo_ui(sexo_ui)
 
-    percentiles = sorted(df[cols["percentil"]].dropna().astype(int).unique().tolist())
+    edad = st.number_input("Edad", min_value=65, max_value=100, value=70, step=1)
+    grupo = edad_a_grupo(edad)
+
+    percentiles = sorted(df[cols["percentil"]].dropna().unique().tolist())
     percentil = st.selectbox("Percentil", percentiles)
 
-    if cols["grupo"] is not None:
-        edad = st.number_input("Edad", min_value=65, max_value=100, value=70, step=1)
-        grupo = edad_a_grupo(edad)
+    resultado = df[
+        (df[cols["sexo"]] == sexo) &
+        (df[cols["grupo"]] == grupo) &
+        (df[cols["percentil"]] == percentil)
+    ]
 
-        if grupo is None:
-            st.warning("Para esta prueba la edad debe ser 65 o más.")
-        else:
-            resultado = df[
-                (df[cols["sexo"]] == sexo) &
-                (df[cols["grupo"]] == grupo) &
-                (df[cols["percentil"]] == percentil)
-            ]
-
-            if not resultado.empty:
-                valor = resultado.iloc[0][cols["resultado"]]
-                st.success(f"Repeticiones esperadas: {valor}")
-                st.caption(f"Grupo de edad utilizado: {grupo}")
-            else:
-                st.warning("No hay un valor exacto para esa combinación.")
+    if not resultado.empty:
+        valor = resultado.iloc[0][cols["resultado"]]
+        st.success(f"Repeticiones esperadas: {valor}")
+        st.caption(f"Grupo de edad utilizado: {grupo}")
     else:
-        resultado = df[
-            (df[cols["sexo"]] == sexo) &
-            (df[cols["percentil"]] == percentil)
-        ]
-
-        if not resultado.empty:
-            valor = resultado.iloc[0][cols["resultado"]]
-            st.success(f"Repeticiones esperadas: {valor}")
-        else:
-            st.warning("No hay un valor exacto para esa combinación.")
+        st.warning("No hay un valor exacto para esa combinación.")
