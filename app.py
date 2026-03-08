@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import unicodedata
-import math
+import matplotlib.pyplot as plt
 
 st.set_page_config(page_title="Calculadora de Aptitud Física", layout="centered")
 
@@ -121,35 +121,77 @@ def buscar_rango_edad_prension(edad, rangos_disponibles):
 
 
 def formatear_percentil(p):
+    if p is None:
+        return "N/D"
     if float(p).is_integer():
         return str(int(p))
-    return str(p)
+    return f"{p:.1f}"
 
 
-def describir_percentil_estimado(p):
+def obtener_color_percentil(p):
+    if p is None:
+        return "#9E9E9E"
+    if p < 10:
+        return "#D32F2F"   # rojo
+    elif p < 25:
+        return "#F57C00"   # naranja
+    elif p <= 75:
+        return "#388E3C"   # verde
+    else:
+        return "#1976D2"   # azul
+
+
+def obtener_etiqueta_semaforo(p):
+    if p is None:
+        return "Sin clasificación"
     if p < 10:
         return "Muy bajo"
     elif p < 25:
         return "Bajo"
-    elif p < 50:
-        return "Por debajo de la media"
-    elif p == 50:
-        return "Promedio"
-    elif p < 75:
-        return "Por encima de la media"
-    elif p < 90:
-        return "Bueno"
+    elif p <= 75:
+        return "Normal"
     else:
-        return "Muy bueno"
+        return "Alto"
+
+
+def interpretar_clinicamente(p, prueba):
+    if p is None:
+        return "No se pudo estimar el percentil."
+
+    if prueba == "Caminata 6 minutos":
+        if p < 10:
+            return "Capacidad aeróbica muy disminuida para su referencia. Conviene seguimiento clínico y plan de intervención."
+        elif p < 25:
+            return "Capacidad aeróbica por debajo de lo esperado. Sugiere margen claro de mejora funcional."
+        elif p <= 75:
+            return "Capacidad aeróbica dentro de rango funcional esperado."
+        else:
+            return "Capacidad aeróbica por encima de lo esperado para su referencia."
+
+    if prueba == "Fuerza prensión":
+        if p < 10:
+            return "Fuerza de prensión muy baja para su referencia. Puede sugerir fragilidad o pérdida de fuerza significativa."
+        elif p < 25:
+            return "Fuerza de prensión baja. Conviene seguimiento y trabajo específico de fuerza."
+        elif p <= 75:
+            return "Fuerza de prensión dentro del rango esperado."
+        else:
+            return "Fuerza de prensión por encima de la media para su referencia."
+
+    if prueba == "Levantarse de silla":
+        if p < 10:
+            return "Rendimiento funcional muy bajo en miembros inferiores. Sugiere menor fuerza funcional y necesidad de intervención."
+        elif p < 25:
+            return "Rendimiento bajo para su referencia. Conviene seguimiento y entrenamiento funcional."
+        elif p <= 75:
+            return "Rendimiento funcional dentro del rango esperado."
+        else:
+            return "Rendimiento funcional por encima de lo esperado."
+
+    return "Interpretación no disponible."
 
 
 def estimar_percentil(valor_medido, df_ref, col_valor, col_percentil):
-    """
-    Devuelve:
-    - percentil_estimado_num
-    - texto_resultado
-    - texto_rango
-    """
     ref = df_ref[[col_valor, col_percentil]].dropna().copy()
     ref = ref.sort_values(by=col_valor).drop_duplicates(subset=[col_valor, col_percentil])
 
@@ -159,23 +201,19 @@ def estimar_percentil(valor_medido, df_ref, col_valor, col_percentil):
     valores = ref[col_valor].tolist()
     percentiles = ref[col_percentil].tolist()
 
-    # Exacto
     exactos = ref[ref[col_valor] == valor_medido]
     if not exactos.empty:
         p = float(exactos.iloc[0][col_percentil])
         return p, f"Percentil exacto: P{formatear_percentil(p)}", f"P{formatear_percentil(p)}"
 
-    # Por debajo del mínimo
     if valor_medido < min(valores):
         p = float(percentiles[0])
-        return p, f"Por debajo del percentil mínimo disponible.", f"< P{formatear_percentil(p)}"
+        return p, "Por debajo del percentil mínimo disponible.", f"< P{formatear_percentil(p)}"
 
-    # Por encima del máximo
     if valor_medido > max(valores):
         p = float(percentiles[-1])
-        return p, f"Por encima del percentil máximo disponible.", f"> P{formatear_percentil(p)}"
+        return p, "Por encima del percentil máximo disponible.", f"> P{formatear_percentil(p)}"
 
-    # Entre dos percentiles
     for i in range(len(ref) - 1):
         v1 = float(ref.iloc[i][col_valor])
         v2 = float(ref.iloc[i + 1][col_valor])
@@ -195,6 +233,45 @@ def estimar_percentil(valor_medido, df_ref, col_valor, col_percentil):
     return None, "No se pudo estimar el percentil.", None
 
 
+def mostrar_semaforo(p):
+    color = obtener_color_percentil(p)
+    etiqueta = obtener_etiqueta_semaforo(p)
+
+    st.markdown(
+        f"""
+        <div style="
+            background-color:{color};
+            color:white;
+            padding:14px 18px;
+            border-radius:10px;
+            font-weight:700;
+            margin-top:8px;
+            margin-bottom:12px;
+            text-align:center;
+            font-size:18px;">
+            {etiqueta}
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+
+def graficar_percentiles(df_ref, col_percentil, col_valor, valor_medido, titulo_y):
+    graf = df_ref[[col_percentil, col_valor]].dropna().copy()
+    graf = graf.sort_values(by=col_percentil)
+
+    if graf.empty:
+        return
+
+    fig, ax = plt.subplots(figsize=(6, 3.5))
+    ax.plot(graf[col_percentil], graf[col_valor], marker="o")
+    ax.axhline(valor_medido, linestyle="--")
+    ax.set_xlabel("Percentil")
+    ax.set_ylabel(titulo_y)
+    ax.set_title("Curva de referencia")
+    st.pyplot(fig)
+
+
 # =========================
 # Carga de datos
 # =========================
@@ -211,12 +288,7 @@ def cargar_caminata():
     df = convertir_numerico(df, [col_altura, col_edad, col_percentil, col_resultado])
     df = df.dropna(subset=[col_altura, col_edad, col_percentil, col_resultado])
 
-    return df, {
-        "altura": col_altura,
-        "edad": col_edad,
-        "percentil": col_percentil,
-        "resultado": col_resultado
-    }
+    return df, {"altura": col_altura, "edad": col_edad, "percentil": col_percentil, "resultado": col_resultado}
 
 
 @st.cache_data
@@ -234,12 +306,7 @@ def cargar_prension():
     df = convertir_numerico(df, [col_percentil, col_resultado])
     df = df.dropna(subset=[col_percentil, col_resultado])
 
-    return df, {
-        "sexo": col_sexo,
-        "edad": col_edad,
-        "percentil": col_percentil,
-        "resultado": col_resultado
-    }
+    return df, {"sexo": col_sexo, "edad": col_edad, "percentil": col_percentil, "resultado": col_resultado}
 
 
 @st.cache_data
@@ -257,12 +324,7 @@ def cargar_silla():
     df = convertir_numerico(df, [col_percentil, col_resultado])
     df = df.dropna(subset=[col_percentil, col_resultado])
 
-    return df, {
-        "sexo": col_sexo,
-        "grupo": col_grupo,
-        "percentil": col_percentil,
-        "resultado": col_resultado
-    }
+    return df, {"sexo": col_sexo, "grupo": col_grupo, "percentil": col_percentil, "resultado": col_resultado}
 
 
 # =========================
@@ -275,9 +337,6 @@ prueba = st.selectbox(
     ["Caminata 6 minutos", "Fuerza prensión", "Levantarse de silla"]
 )
 
-# -------------------------
-# Caminata 6 minutos
-# -------------------------
 if prueba == "Caminata 6 minutos":
     df, cols = cargar_caminata()
 
@@ -288,10 +347,7 @@ if prueba == "Caminata 6 minutos":
     altura = st.selectbox("Altura (cm)", alturas)
     valor_medido = st.number_input("Distancia caminada (metros)", min_value=0.0, value=451.0, step=1.0)
 
-    ref = df[
-        (df[cols["edad"]] == edad) &
-        (df[cols["altura"]] == altura)
-    ].copy()
+    ref = df[(df[cols["edad"]] == edad) & (df[cols["altura"]] == altura)].copy()
 
     if ref.empty:
         st.warning("No hay datos de referencia para esa combinación.")
@@ -301,25 +357,20 @@ if prueba == "Caminata 6 minutos":
 
         p_est, texto_p, rango_p = estimar_percentil(valor_medido, ref, cols["resultado"], cols["percentil"])
 
-        if p_est is not None:
-            st.success(texto_p)
-            if rango_p:
-                st.write(f"**Rango percentilar:** {rango_p}")
-            st.write(f"**Referencia P50:** {p50_texto}")
-            st.write(f"**Interpretación:** {describir_percentil_estimado(p_est)}")
-        else:
-            st.warning("No se pudo estimar el percentil.")
+        mostrar_semaforo(p_est)
+        st.success(texto_p)
+        if rango_p:
+            st.write(f"**Rango percentilar:** {rango_p}")
+        st.write(f"**Referencia P50:** {p50_texto}")
+        st.write(f"**Interpretación clínica:** {interpretar_clinicamente(p_est, prueba)}")
 
+        graficar_percentiles(ref, cols["percentil"], cols["resultado"], valor_medido, "Distancia (m)")
 
-# -------------------------
-# Fuerza prensión
-# -------------------------
 elif prueba == "Fuerza prensión":
     df, cols = cargar_prension()
 
     sexo_ui = st.selectbox("Sexo", ["Hombre", "Mujer"])
     sexo = formatear_sexo_ui(sexo_ui)
-
     edad = st.number_input("Edad", min_value=20, max_value=110, value=60, step=1)
     fuerza_medida = st.number_input("Fuerza medida (kg)", min_value=0.0, value=25.0, step=0.1)
 
@@ -329,10 +380,7 @@ elif prueba == "Fuerza prensión":
     if rango_edad is None:
         st.warning("No hay un rango de edad válido para esa edad.")
     else:
-        ref = df[
-            (df[cols["sexo"]] == sexo) &
-            (df[cols["edad"]].astype(str) == str(rango_edad))
-        ].copy()
+        ref = df[(df[cols["sexo"]] == sexo) & (df[cols["edad"]].astype(str) == str(rango_edad))].copy()
 
         if ref.empty:
             st.warning("No hay datos de referencia para esa combinación.")
@@ -342,24 +390,21 @@ elif prueba == "Fuerza prensión":
 
             p_est, texto_p, rango_p = estimar_percentil(fuerza_medida, ref, cols["resultado"], cols["percentil"])
 
+            mostrar_semaforo(p_est)
             st.success(texto_p)
             if rango_p:
                 st.write(f"**Rango percentilar:** {rango_p}")
             st.write(f"**Rango de edad utilizado:** {rango_edad}")
             st.write(f"**Referencia P50:** {p50_texto}")
-            if p_est is not None:
-                st.write(f"**Interpretación:** {describir_percentil_estimado(p_est)}")
+            st.write(f"**Interpretación clínica:** {interpretar_clinicamente(p_est, prueba)}")
 
+            graficar_percentiles(ref, cols["percentil"], cols["resultado"], fuerza_medida, "Fuerza (kg)")
 
-# -------------------------
-# Levantarse de silla
-# -------------------------
 elif prueba == "Levantarse de silla":
     df, cols = cargar_silla()
 
     sexo_ui = st.selectbox("Sexo", ["Hombre", "Mujer"])
     sexo = formatear_sexo_ui(sexo_ui)
-
     edad = st.number_input("Edad", min_value=65, max_value=110, value=70, step=1)
     repeticiones = st.number_input("Repeticiones realizadas", min_value=0.0, value=11.0, step=1.0)
 
@@ -368,10 +413,7 @@ elif prueba == "Levantarse de silla":
     if grupo is None:
         st.warning("No hay grupo etario válido para esa edad.")
     else:
-        ref = df[
-            (df[cols["sexo"]] == sexo) &
-            (df[cols["grupo"]] == grupo)
-        ].copy()
+        ref = df[(df[cols["sexo"]] == sexo) & (df[cols["grupo"]] == grupo)].copy()
 
         if ref.empty:
             st.warning("No hay datos de referencia para esa combinación.")
@@ -381,10 +423,12 @@ elif prueba == "Levantarse de silla":
 
             p_est, texto_p, rango_p = estimar_percentil(repeticiones, ref, cols["resultado"], cols["percentil"])
 
+            mostrar_semaforo(p_est)
             st.success(texto_p)
             if rango_p:
                 st.write(f"**Rango percentilar:** {rango_p}")
             st.write(f"**Grupo de edad utilizado:** {grupo}")
             st.write(f"**Referencia P50:** {p50_texto} repeticiones")
-            if p_est is not None:
-                st.write(f"**Interpretación:** {describir_percentil_estimado(p_est)}")
+            st.write(f"**Interpretación clínica:** {interpretar_clinicamente(p_est, prueba)}")
+
+            graficar_percentiles(ref, cols["percentil"], cols["resultado"], repeticiones, "Repeticiones")
