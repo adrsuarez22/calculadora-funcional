@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import unicodedata
-import matplotlib.pyplot as plt
 
 st.set_page_config(page_title="Calculadora de Aptitud Física", layout="centered")
 
@@ -432,3 +431,4 @@ elif prueba == "Levantarse de silla":
             st.write(f"**Interpretación clínica:** {interpretar_clinicamente(p_est, prueba)}")
 
             graficar_percentiles(ref, cols["percentil"], cols["resultado"], repeticiones, "Repeticiones")
+
