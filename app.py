@@ -258,18 +258,22 @@ def mostrar_semaforo(p):
 
 
 def graficar_percentiles(df_ref, col_percentil, col_valor, valor_medido, titulo_y):
+
     graf = df_ref[[col_percentil, col_valor]].dropna().copy()
     graf = graf.sort_values(by=col_percentil)
 
     if graf.empty:
         return
 
-    fig, ax = plt.subplots(figsize=(6, 3.5))
-    ax.plot(graf[col_percentil], graf[col_valor], marker="o")
-    ax.axhline(valor_medido, linestyle="--")
-    ax.set_xlabel("Percentil")
-    ax.set_ylabel(titulo_y)
-    ax.set_title("Curva de referencia")
+    fig = plt.figure()
+
+    plt.plot(graf[col_percentil], graf[col_valor], marker="o")
+    plt.axhline(valor_medido, linestyle="--")
+
+    plt.xlabel("Percentil")
+    plt.ylabel(titulo_y)
+    plt.title("Curva de referencia")
+
     st.pyplot(fig)
 
 
@@ -433,5 +437,6 @@ elif prueba == "Levantarse de silla":
             st.write(f"**Interpretación clínica:** {interpretar_clinicamente(p_est, prueba)}")
 
             graficar_percentiles(ref, cols["percentil"], cols["resultado"], repeticiones, "Repeticiones")
+
 
 
