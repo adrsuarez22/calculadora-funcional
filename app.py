@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import unicodedata
 
-st.set_page_config(page_title="Calculadora de Aptitud Física", layout="centered")
+st.set_page_config(page_title="Calculadora de Condición Física", layout="centered")
 
 
 # =========================
@@ -409,3 +409,4 @@ elif prueba == "Levantarse de silla":
             st.write(f"**Grupo de edad utilizado:** {grupo}")
             st.write(f"**Referencia P50:** {p50_texto} repeticiones")
             st.write(f"**Interpretación clínica:** {interpretar_clinicamente(p_est, prueba)}")
+
