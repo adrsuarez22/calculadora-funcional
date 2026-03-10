@@ -1,31 +1,9 @@
 import streamlit as st
 import pandas as pd
 import unicodedata
-from datetime import datetime
-from supabase import create_client, Client
 
-SUPABASE_URL = st.secrets["SUPABASE_URL"]
-SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+st.set_page_config(page_title="Calculadora de Aptitud Física", layout="centered")
 
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-st.set_page_config(page_title="Calculadora de Condición Física", layout="centered")
-
-
-def guardar_evaluacion(paciente, sexo, edad, prueba, valor_medido, percentil, clasificacion):
-    payload = {
-        "fecha": datetime.now().strftime("%Y-%m-%d"),
-        "paciente": paciente,
-        "sexo": sexo,
-        "edad": int(edad),
-        "prueba": prueba,
-        "valor_medido": float(valor_medido),
-        "percentilo": round(float(percentil), 1) if percentil is not None else None,
-        "clasificacion": clasificacion
-    }
-
-    respuesta = supabase.table("evaluaciones").insert(payload).execute()
-    return respuesta
 
 # =========================
 # Utilidades generales
@@ -335,7 +313,7 @@ def cargar_silla():
 # =========================
 # Interfaz
 # =========================
-st.title("Calculadora de Condición Física")
+st.title("Calculadora de Aptitud Física")
 
 prueba = st.selectbox(
     "Seleccionar prueba",
@@ -431,6 +409,3 @@ elif prueba == "Levantarse de silla":
             st.write(f"**Grupo de edad utilizado:** {grupo}")
             st.write(f"**Referencia P50:** {p50_texto} repeticiones")
             st.write(f"**Interpretación clínica:** {interpretar_clinicamente(p_est, prueba)}")
-
-
-
