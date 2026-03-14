@@ -632,52 +632,86 @@ def evaluar_perfil_morfofuncional(sexo, peso_kg, talla_m, grasa_pct, masa_muscul
     }
 
 
-def enriquecer_historial_corporal(df_inbody, sexo, talla_m):
-    if df_inbody is None or df_inbody.empty:
-        return pd.DataFrame()
+def enriquecer_historial_corporal(df, sexo, talla):
+    if df is None or df.empty:
+        return df
 
-    df = df_inbody.copy()
+    df = df.copy()
 
-    for col in [
-        "peso_kg",
-        "imc",
-        "grasa_corporal_pct",
-        "masa_muscular_kg",
-        "agua_corporal_pct",
-        "grasa_visceral",
-        "metabolismo_basal"
-    ]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    resultados = []
+    diagnosticos = []
+    sugerencias = []
+    motivos = []
 
     for _, row in df.iterrows():
-        res = evaluar_perfil_morfofuncional(
-            sexo=sexo,
-            peso_kg=row.get("peso_kg"),
-            talla_m=talla_m,
-            grasa_pct=row.get("grasa_corporal_pct"),
-            masa_muscular_kg=row.get("masa_muscular_kg"),
-            agua_pct=row.get("agua_corporal_pct"),
-            grasa_visceral=row.get("grasa_visceral")
-        )
 
-        resultados.append({
-            "diagnostico_corporal": res["estado"],
-            "sugerencia_corporal": res["recomendacion"],
-            "clasif_imc": res["clasif_imc"],
-            "clasif_grasa": res["clasif_grasa"],
-            "clasif_agua": res["clasif_agua"],
-            "clasif_visceral": res["clasif_visceral"],
-            "musculo_rel_pct": res["musculo_rel_pct"],
-            "clasif_musculo": res["clasif_musculo"],
-            "motivos_corporal": " | ".join(res["motivos"]) if res["motivos"] else None
-        })
+        peso = row.get("peso_kg")
+        grasa = row.get("grasa_corporal_pct")
+        musculo = row.get("masa_muscular_kg")
+        agua = row.get("agua_corporal_pct")
+        visceral = row.get("grasa_visceral")
 
-    df_resultados = pd.DataFrame(resultados)
-    return pd.concat([df.reset_index(drop=True), df_resultados], axis=1)
+        imc = None
+        if peso and talla:
+            imc = peso / (talla ** 2)
 
+        motivo_lista = []
+
+        # IMC
+        if imc:
+            if imc < 18.5:
+                motivo_lista.append("IMC bajo")
+            elif imc >= 30:
+                motivo_lista.append("IMC elevado")
+
+        # grasa corporal
+        if sexo == "hombre":
+            if grasa and grasa > 25:
+                motivo_lista.append("grasa corporal elevada")
+        else:
+            if grasa and grasa > 39:
+                motivo_lista.append("grasa corporal elevada")
+
+        # grasa visceral
+        if visceral and visceral >= 10:
+            motivo_lista.append("grasa visceral elevada")
+
+        # músculo relativo
+        if musculo and peso:
+            musc_pct = musculo / peso * 100
+
+            if sexo == "hombre":
+                if musc_pct < 33:
+                    motivo_lista.append("masa muscular baja")
+            else:
+                if musc_pct < 24:
+                    motivo_lista.append("masa muscular baja")
+
+        # diagnóstico final
+        if len(motivo_lista) == 0:
+            diagnostico = "Composición corporal dentro de rangos normales"
+            sugerencia = "Mantener hábitos actuales de actividad física y nutrición equilibrada"
+
+        elif "grasa visceral elevada" in motivo_lista:
+            diagnostico = "Riesgo cardiometabólico moderado"
+            sugerencia = "Programa de reducción de grasa corporal y ejercicio aeróbico"
+
+        elif "masa muscular baja" in motivo_lista:
+            diagnostico = "Riesgo sarcopénico"
+            sugerencia = "Programa de fortalecimiento muscular"
+
+        else:
+            diagnostico = "Alteración leve de composición corporal"
+            sugerencia = "Optimizar hábitos de ejercicio y nutrición"
+
+        diagnosticos.append(diagnostico)
+        sugerencias.append(sugerencia)
+        motivos.append(", ".join(motivo_lista))
+
+    df["diagnostico_corporal"] = diagnosticos
+    df["sugerencia_corporal"] = sugerencias
+    df["motivos_corporal"] = motivos
+
+    return df
 
 def generar_df_analisis_cientifico(ficha, df_peso, df_inbody, df_eval):
     filas = []
