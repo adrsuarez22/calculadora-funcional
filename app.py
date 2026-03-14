@@ -911,6 +911,7 @@ def generar_pdf_paciente(ficha, df_peso, df_inbody, df_eval):
 
     if df_inbody_pdf is not None and not df_inbody_pdf.empty:
         ultimo_corporal = df_inbody_pdf.copy()
+
         if "fecha" in ultimo_corporal.columns:
             ultimo_corporal["fecha"] = pd.to_datetime(ultimo_corporal["fecha"], errors="coerce")
             ultimo_corporal = ultimo_corporal.sort_values("fecha", ascending=False)
@@ -930,14 +931,18 @@ def generar_pdf_paciente(ficha, df_peso, df_inbody, df_eval):
         y -= 22
 
     y = escribir_bloque_pdf(
-        pdf, y, "Historial de peso e IMC",
+        pdf,
+        y,
+        "Historial de peso e IMC",
         df_peso_pdf,
         ["fecha", "peso_kg", "imc"],
         [120, 120, 120]
     )
 
     y = escribir_bloque_pdf(
-        pdf, y, "Historial de composición corporal",
+        pdf,
+        y,
+        "Historial de composición corporal",
         df_inbody_pdf,
         [
             "fecha",
@@ -952,7 +957,9 @@ def generar_pdf_paciente(ficha, df_peso, df_inbody, df_eval):
     )
 
     y = escribir_bloque_pdf(
-        pdf, y, "Evaluaciones funcionales",
+        pdf,
+        y,
+        "Evaluaciones funcionales",
         df_eval_pdf,
         ["fecha", "prueba", "valor_medido", "percentil", "clasificacion"],
         [70, 150, 70, 70, 100]
