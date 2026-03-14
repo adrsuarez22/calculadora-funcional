@@ -3,9 +3,22 @@ import pandas as pd
 import altair as alt
 from datetime import datetime, date
 from supabase import create_client, Client
-from reportlab.lib.pagesizes import letter
-from reportlab.pdfgen import canvas
 from io import BytesIO
+
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import cm
+from reportlab.platypus import (
+    SimpleDocTemplate,
+    Paragraph,
+    Spacer,
+    Table,
+    TableStyle
+)
+
+from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.utils import get_column_letter
 
 # =========================================================
 # CONFIG
@@ -427,124 +440,13 @@ def preparar_df_exportacion(df):
     return df_out
 
 
-def generar_excel_paciente(ficha, df_peso, df_inbody, df_eval):
-    output = BytesIO()
-
-    ficha_df = pd.DataFrame([{
-        "Paciente": ficha["nombre"],
-        "Sexo": ficha["sexo"],
-        "Talla_m": ficha["talla_m"],
-        "CantidadEvaluaciones": ficha["cantidad_evaluaciones"],
-        "UltimaFechaEvaluacion": ficha["ultima_fecha"],
-        "UltimaClasificacion": ficha["ultima_clasificacion"],
-        "UltimaPrueba": ficha["ultima_prueba"]
-    }])
-
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        preparar_df_exportacion(ficha_df).to_excel(writer, sheet_name="Ficha", index=False)
-        preparar_df_exportacion(df_peso).to_excel(writer, sheet_name="Peso_IMC", index=False)
-        preparar_df_exportacion(df_inbody).to_excel(writer, sheet_name="Composicion_Corporal", index=False)
-        preparar_df_exportacion(df_eval).to_excel(writer, sheet_name="Evaluaciones", index=False)
-
-    output.seek(0)
-    return output
-
-
-def escribir_bloque_pdf(pdf, y, titulo, df, columnas, anchos):
-    pdf.setFont("Helvetica-Bold", 12)
-    pdf.drawString(40, y, titulo)
-    y -= 18
-
-    pdf.setFont("Helvetica-Bold", 8)
-    x = 40
-    for col, ancho in zip(columnas, anchos):
-        pdf.drawString(x, y, str(col))
-        x += ancho
-
-    y -= 14
-    pdf.setFont("Helvetica", 8)
-
-    if df is None or df.empty:
-        pdf.drawString(40, y, "Sin datos")
-        return y - 20
-
-    for _, row in df.iterrows():
-        x = 40
-        for col, ancho in zip(columnas, anchos):
-            valor = row.get(col, "")
-            if pd.isna(valor):
-                valor = ""
-            valor = str(valor)
-            if len(valor) > 20:
-                valor = valor[:17] + "..."
-            pdf.drawString(x, y, valor)
-            x += ancho
-
-        y -= 12
-
-        if y < 70:
-            pdf.showPage()
-            y = 750
-            pdf.setFont("Helvetica", 8)
-
-    return y - 12
-
-
-def generar_pdf_paciente(ficha, df_peso, df_inbody, df_eval):
-    buffer = BytesIO()
-    pdf = canvas.Canvas(buffer, pagesize=letter)
-    y = 760
-
-    pdf.setFont("Helvetica-Bold", 16)
-    pdf.drawString(40, y, "Reporte completo del paciente")
-    y -= 24
-
-    pdf.setFont("Helvetica", 11)
-    pdf.drawString(40, y, f"Paciente: {ficha['nombre']}")
-    y -= 16
-    pdf.drawString(40, y, f"Sexo: {ficha['sexo']}")
-    y -= 16
-    pdf.drawString(40, y, f"Talla: {ficha['talla_m']} m")
-    y -= 16
-    pdf.drawString(40, y, f"Fecha del reporte: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-    y -= 26
-
-    df_peso_pdf = preparar_df_exportacion(df_peso)
-    df_inbody_pdf = preparar_df_exportacion(df_inbody)
-    df_eval_pdf = preparar_df_exportacion(df_eval)
-
-    y = escribir_bloque_pdf(
-        pdf, y, "Historial de peso e IMC",
-        df_peso_pdf,
-        ["fecha", "peso_kg", "imc"],
-        [120, 120, 120]
-    )
-
-    y = escribir_bloque_pdf(
-        pdf, y, "Historial de composición corporal",
-        df_inbody_pdf,
-        ["fecha", "peso_kg", "imc", "grasa_corporal_pct", "masa_muscular_kg", "agua_corporal_pct"],
-        [70, 65, 55, 80, 80, 80]
-    )
-
-    y = escribir_bloque_pdf(
-        pdf, y, "Evaluaciones funcionales",
-        df_eval_pdf,
-        ["fecha", "prueba", "valor_medido", "percentil", "clasificacion"],
-        [70, 150, 70, 70, 100]
-    )
-
-    pdf.save()
-    buffer.seek(0)
-    return buffer
-
 # =========================================================
 # UTILIDADES CLÍNICAS - COMPOSICIÓN CORPORAL
 # =========================================================
 def clasificacion_grasa_corporal(sexo, grasa_pct):
     sexo = str(sexo).strip().lower()
 
-    if grasa_pct is None:
+    if grasa_pct is None or pd.isna(grasa_pct):
         return "Sin clasificar"
 
     if sexo == "hombre":
@@ -573,7 +475,7 @@ def clasificacion_grasa_corporal(sexo, grasa_pct):
 def clasificacion_agua_corporal(sexo, agua_pct):
     sexo = str(sexo).strip().lower()
 
-    if agua_pct is None:
+    if agua_pct is None or pd.isna(agua_pct):
         return "Sin clasificar"
 
     if sexo == "hombre":
@@ -596,7 +498,7 @@ def clasificacion_agua_corporal(sexo, agua_pct):
 
 
 def clasificacion_grasa_visceral(grasa_visceral):
-    if grasa_visceral is None:
+    if grasa_visceral is None or pd.isna(grasa_visceral):
         return "Sin clasificar"
 
     if grasa_visceral <= 9:
@@ -610,6 +512,8 @@ def clasificacion_grasa_visceral(grasa_visceral):
 def calcular_masa_muscular_relativa_pct(peso_kg, masa_muscular_kg):
     if peso_kg is None or masa_muscular_kg is None:
         return None
+    if pd.isna(peso_kg) or pd.isna(masa_muscular_kg):
+        return None
     if float(peso_kg) <= 0:
         return None
     return round((float(masa_muscular_kg) / float(peso_kg)) * 100, 2)
@@ -618,7 +522,7 @@ def calcular_masa_muscular_relativa_pct(peso_kg, masa_muscular_kg):
 def clasificacion_masa_muscular_relativa(sexo, musculo_relativo_pct):
     sexo = str(sexo).strip().lower()
 
-    if musculo_relativo_pct is None:
+    if musculo_relativo_pct is None or pd.isna(musculo_relativo_pct):
         return "Sin clasificar"
 
     if sexo == "hombre":
@@ -742,6 +646,478 @@ def evaluar_perfil_morfofuncional(sexo, peso_kg, talla_m, grasa_pct, masa_muscul
         "motivos": motivos,
         "recomendacion": recomendacion
     }
+
+
+def enriquecer_historial_corporal(df, sexo, talla_m):
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    df = df.copy()
+
+    for col in [
+        "peso_kg",
+        "imc",
+        "grasa_corporal_pct",
+        "masa_muscular_kg",
+        "agua_corporal_pct",
+        "grasa_visceral",
+        "metabolismo_basal"
+    ]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    diagnosticos = []
+    sugerencias = []
+    motivos_lista = []
+    clasif_imc_lista = []
+    clasif_grasa_lista = []
+    clasif_agua_lista = []
+    clasif_visceral_lista = []
+    musculo_rel_lista = []
+    clasif_musculo_lista = []
+
+    for _, row in df.iterrows():
+        res = evaluar_perfil_morfofuncional(
+            sexo=sexo,
+            peso_kg=row.get("peso_kg"),
+            talla_m=talla_m,
+            grasa_pct=row.get("grasa_corporal_pct"),
+            masa_muscular_kg=row.get("masa_muscular_kg"),
+            agua_pct=row.get("agua_corporal_pct"),
+            grasa_visceral=row.get("grasa_visceral")
+        )
+
+        diagnosticos.append(res["estado"])
+        sugerencias.append(res["recomendacion"])
+        motivos_lista.append(" | ".join(res["motivos"]) if res["motivos"] else "")
+        clasif_imc_lista.append(res["clasif_imc"])
+        clasif_grasa_lista.append(res["clasif_grasa"])
+        clasif_agua_lista.append(res["clasif_agua"])
+        clasif_visceral_lista.append(res["clasif_visceral"])
+        musculo_rel_lista.append(res["musculo_rel_pct"])
+        clasif_musculo_lista.append(res["clasif_musculo"])
+
+    df["diagnostico_corporal"] = diagnosticos
+    df["sugerencia_corporal"] = sugerencias
+    df["motivos_corporal"] = motivos_lista
+    df["clasif_imc"] = clasif_imc_lista
+    df["clasif_grasa"] = clasif_grasa_lista
+    df["clasif_agua"] = clasif_agua_lista
+    df["clasif_visceral"] = clasif_visceral_lista
+    df["musculo_rel_pct"] = musculo_rel_lista
+    df["clasif_musculo"] = clasif_musculo_lista
+
+    return df
+
+
+def agregar_identificacion_paciente(df, ficha, origen=""):
+    if df is None or df.empty:
+        return pd.DataFrame(columns=[
+            "Paciente",
+            "PacienteID_Ficha",
+            "Sexo",
+            "Talla_m",
+            "Origen"
+        ])
+
+    df_out = df.copy()
+
+    rename_map = {}
+    if "id" in df_out.columns:
+        rename_map["id"] = "RegistroID"
+    if "paciente_id" in df_out.columns:
+        rename_map["paciente_id"] = "PacienteID_Registro"
+    df_out = df_out.rename(columns=rename_map)
+
+    columnas_identificacion = {
+        "Paciente": ficha.get("nombre"),
+        "PacienteID_Ficha": ficha.get("id"),
+        "Sexo": ficha.get("sexo"),
+        "Talla_m": ficha.get("talla_m"),
+        "Origen": origen
+    }
+
+    for nombre_col, valor in reversed(list(columnas_identificacion.items())):
+        if nombre_col in df_out.columns:
+            df_out.drop(columns=[nombre_col], inplace=True)
+        df_out.insert(0, nombre_col, valor)
+
+    return df_out
+
+
+def generar_df_analisis_cientifico(ficha, df_peso, df_inbody, df_eval):
+    filas = []
+
+    nombre = ficha.get("nombre")
+    sexo = ficha.get("sexo")
+    talla_m = ficha.get("talla_m")
+    paciente_id = ficha.get("id")
+
+    if df_peso is not None and not df_peso.empty:
+        df_p = df_peso.copy()
+        if "fecha" in df_p.columns:
+            df_p["fecha"] = pd.to_datetime(df_p["fecha"], errors="coerce")
+
+        for _, row in df_p.iterrows():
+            filas.append({
+                "PacienteID": paciente_id,
+                "Paciente": nombre,
+                "Sexo": sexo,
+                "Talla_m": talla_m,
+                "Fecha": row.get("fecha"),
+                "TipoRegistro": "Peso_IMC",
+                "Prueba": None,
+                "ValorMedido": None,
+                "Percentil": None,
+                "ClasificacionFuncional": None,
+                "Peso_kg": row.get("peso_kg"),
+                "IMC": row.get("imc"),
+                "GrasaCorporal_pct": None,
+                "MasaMuscular_kg": None,
+                "AguaCorporal_pct": None,
+                "GrasaVisceral": None,
+                "MetabolismoBasal": None,
+                "MusculoRelativo_pct": None,
+                "Clasif_IMC": clasificar_imc(row.get("imc"))[0] if pd.notna(row.get("imc")) else None,
+                "Clasif_Grasa": None,
+                "Clasif_Agua": None,
+                "Clasif_Visceral": None,
+                "Clasif_Musculo": None,
+                "DiagnosticoCorporal": None,
+                "SugerenciaCorporal": None,
+                "MotivosCorporal": None,
+                "Observaciones": None
+            })
+
+    if df_inbody is not None and not df_inbody.empty:
+        df_c = enriquecer_historial_corporal(df_inbody, str(sexo).strip().lower(), talla_m)
+        if "fecha" in df_c.columns:
+            df_c["fecha"] = pd.to_datetime(df_c["fecha"], errors="coerce")
+
+        for _, row in df_c.iterrows():
+            filas.append({
+                "PacienteID": paciente_id,
+                "Paciente": nombre,
+                "Sexo": sexo,
+                "Talla_m": talla_m,
+                "Fecha": row.get("fecha"),
+                "TipoRegistro": "Composicion_Corporal",
+                "Prueba": None,
+                "ValorMedido": None,
+                "Percentil": None,
+                "ClasificacionFuncional": None,
+                "Peso_kg": row.get("peso_kg"),
+                "IMC": row.get("imc"),
+                "GrasaCorporal_pct": row.get("grasa_corporal_pct"),
+                "MasaMuscular_kg": row.get("masa_muscular_kg"),
+                "AguaCorporal_pct": row.get("agua_corporal_pct"),
+                "GrasaVisceral": row.get("grasa_visceral"),
+                "MetabolismoBasal": row.get("metabolismo_basal"),
+                "MusculoRelativo_pct": row.get("musculo_rel_pct"),
+                "Clasif_IMC": row.get("clasif_imc"),
+                "Clasif_Grasa": row.get("clasif_grasa"),
+                "Clasif_Agua": row.get("clasif_agua"),
+                "Clasif_Visceral": row.get("clasif_visceral"),
+                "Clasif_Musculo": row.get("clasif_musculo"),
+                "DiagnosticoCorporal": row.get("diagnostico_corporal"),
+                "SugerenciaCorporal": row.get("sugerencia_corporal"),
+                "MotivosCorporal": row.get("motivos_corporal"),
+                "Observaciones": row.get("observaciones")
+            })
+
+    if df_eval is not None and not df_eval.empty:
+        df_f = df_eval.copy()
+        if "fecha" in df_f.columns:
+            df_f["fecha"] = pd.to_datetime(df_f["fecha"], errors="coerce")
+
+        for _, row in df_f.iterrows():
+            filas.append({
+                "PacienteID": paciente_id,
+                "Paciente": nombre,
+                "Sexo": sexo,
+                "Talla_m": talla_m,
+                "Fecha": row.get("fecha"),
+                "TipoRegistro": "Evaluacion_Funcional",
+                "Prueba": row.get("prueba"),
+                "ValorMedido": row.get("valor_medido"),
+                "Percentil": row.get("percentil"),
+                "ClasificacionFuncional": row.get("clasificacion"),
+                "Peso_kg": None,
+                "IMC": None,
+                "GrasaCorporal_pct": None,
+                "MasaMuscular_kg": None,
+                "AguaCorporal_pct": None,
+                "GrasaVisceral": None,
+                "MetabolismoBasal": None,
+                "MusculoRelativo_pct": None,
+                "Clasif_IMC": None,
+                "Clasif_Grasa": None,
+                "Clasif_Agua": None,
+                "Clasif_Visceral": None,
+                "Clasif_Musculo": None,
+                "DiagnosticoCorporal": None,
+                "SugerenciaCorporal": None,
+                "MotivosCorporal": None,
+                "Observaciones": None
+            })
+
+    df_final = pd.DataFrame(filas)
+
+    if not df_final.empty:
+        df_final["Fecha"] = pd.to_datetime(df_final["Fecha"], errors="coerce")
+        df_final = df_final.sort_values(["Paciente", "Fecha", "TipoRegistro"], ascending=[True, True, True]).reset_index(drop=True)
+
+    return df_final
+
+
+# =========================================================
+# EXPORTACIÓN EXCEL
+# =========================================================
+def _formatear_hoja_excel(ws):
+    if ws.max_row == 0 or ws.max_column == 0:
+        return
+
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = ws.dimensions
+
+    fill_header = PatternFill(fill_type="solid", fgColor="1F4E78")
+    font_header = Font(color="FFFFFF", bold=True)
+
+    for cell in ws[1]:
+        cell.fill = fill_header
+        cell.font = font_header
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    for col_idx, column_cells in enumerate(ws.columns, start=1):
+        max_length = 0
+        for cell in column_cells:
+            try:
+                cell_value = "" if cell.value is None else str(cell.value)
+                if len(cell_value) > max_length:
+                    max_length = len(cell_value)
+            except Exception:
+                pass
+
+        ancho = min(max(max_length + 2, 12), 40)
+        ws.column_dimensions[get_column_letter(col_idx)].width = ancho
+
+    for row in ws.iter_rows(min_row=2):
+        for cell in row:
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+
+
+def generar_excel_paciente(ficha, df_peso, df_inbody, df_eval):
+    output = BytesIO()
+
+    ficha_df = pd.DataFrame([{
+        "Paciente": ficha["nombre"],
+        "PacienteID_Ficha": ficha["id"],
+        "Sexo": ficha["sexo"],
+        "Talla_m": ficha["talla_m"],
+        "CantidadEvaluaciones": ficha["cantidad_evaluaciones"],
+        "UltimaFechaEvaluacion": ficha["ultima_fecha"],
+        "UltimaClasificacion": ficha["ultima_clasificacion"],
+        "UltimaPrueba": ficha["ultima_prueba"],
+        "FechaExportacion": datetime.now().strftime("%Y-%m-%d %H:%M")
+    }])
+
+    df_peso_export = agregar_identificacion_paciente(df_peso, ficha, "Peso_IMC")
+    df_inbody_enriquecido = enriquecer_historial_corporal(
+        df_inbody,
+        str(ficha["sexo"]).strip().lower(),
+        ficha["talla_m"]
+    )
+    df_inbody_export = agregar_identificacion_paciente(df_inbody_enriquecido, ficha, "Composicion_Corporal")
+    df_eval_export = agregar_identificacion_paciente(df_eval, ficha, "Evaluaciones")
+
+    df_analisis = generar_df_analisis_cientifico(
+        ficha=ficha,
+        df_peso=df_peso,
+        df_inbody=df_inbody,
+        df_eval=df_eval
+    )
+
+    if not df_analisis.empty:
+        df_analisis = df_analisis.rename(columns={"PacienteID": "PacienteID_Ficha"})
+
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        preparar_df_exportacion(ficha_df).to_excel(writer, sheet_name="00_Ficha", index=False)
+        preparar_df_exportacion(df_peso_export).to_excel(writer, sheet_name="01_Peso_IMC", index=False)
+        preparar_df_exportacion(df_inbody_export).to_excel(writer, sheet_name="02_Composicion", index=False)
+        preparar_df_exportacion(df_eval_export).to_excel(writer, sheet_name="03_Evaluaciones", index=False)
+        preparar_df_exportacion(df_analisis).to_excel(writer, sheet_name="04_Analisis", index=False)
+
+        workbook = writer.book
+        for nombre_hoja in workbook.sheetnames:
+            _formatear_hoja_excel(workbook[nombre_hoja])
+
+    output.seek(0)
+    return output
+
+
+# =========================================================
+# EXPORTACIÓN PDF
+# =========================================================
+def _texto_seguro(valor):
+    if pd.isna(valor):
+        return "-"
+    valor = str(valor).strip()
+    return valor if valor else "-"
+
+
+def _df_para_pdf(df):
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    out = df.copy()
+
+    for col in out.columns:
+        if "fecha" in col.lower() or "created" in col.lower():
+            out[col] = pd.to_datetime(out[col], errors="coerce").dt.strftime("%Y-%m-%d")
+
+    return out.fillna("-")
+
+
+def _tabla_pdf_desde_df(df, columnas, titulos, anchos_cm, styles):
+    if df is None or df.empty:
+        return Paragraph("Sin datos.", styles["Normal"])
+
+    df = df.copy()
+    columnas_validas = [c for c in columnas if c in df.columns]
+    titulos_validos = [titulos[i] for i, c in enumerate(columnas) if c in df.columns]
+    anchos_validos = [anchos_cm[i] * cm for i, c in enumerate(columnas) if c in df.columns]
+
+    data = [[Paragraph(f"<b>{t}</b>", styles["TablaHeader"]) for t in titulos_validos]]
+
+    for _, row in df.iterrows():
+        fila = []
+        for c in columnas_validas:
+            txt = _texto_seguro(row.get(c))
+            fila.append(Paragraph(txt, styles["TablaBody"]))
+        data.append(fila)
+
+    tabla = Table(data, colWidths=anchos_validos, repeatRows=1)
+    tabla.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1F4E78")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 0), 8),
+        ("FONTSIZE", (0, 1), (-1, -1), 7.5),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#C9D2DF")),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.whitesmoke, colors.HexColor("#F7FAFC")]),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    return tabla
+
+
+def generar_pdf_paciente(ficha, df_peso, df_inbody, df_eval):
+    buffer = BytesIO()
+
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=letter,
+        rightMargin=1.2 * cm,
+        leftMargin=1.2 * cm,
+        topMargin=1.2 * cm,
+        bottomMargin=1.2 * cm
+    )
+
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle(name="TituloMain", parent=styles["Heading1"], fontSize=18, leading=22, spaceAfter=10))
+    styles.add(ParagraphStyle(name="SubTitulo", parent=styles["Heading2"], fontSize=12, leading=15, spaceBefore=8, spaceAfter=6))
+    styles.add(ParagraphStyle(name="TablaHeader", parent=styles["Normal"], fontSize=8, textColor=colors.white))
+    styles.add(ParagraphStyle(name="TablaBody", parent=styles["Normal"], fontSize=7.5, leading=9))
+    styles.add(ParagraphStyle(name="Caja", parent=styles["Normal"], fontSize=9, leading=12))
+
+    story = []
+
+    story.append(Paragraph("Reporte completo del paciente", styles["TituloMain"]))
+    story.append(Paragraph(f"<b>Paciente:</b> {_texto_seguro(ficha['nombre'])}", styles["Caja"]))
+    story.append(Paragraph(f"<b>Sexo:</b> {_texto_seguro(ficha['sexo'])}", styles["Caja"]))
+    story.append(Paragraph(f"<b>Talla:</b> {_texto_seguro(ficha['talla_m'])} m", styles["Caja"]))
+    story.append(Paragraph(f"<b>Fecha del reporte:</b> {datetime.now().strftime('%Y-%m-%d %H:%M')}", styles["Caja"]))
+    story.append(Spacer(1, 0.25 * cm))
+
+    df_peso_pdf = _df_para_pdf(df_peso)
+    df_inbody_pdf = _df_para_pdf(df_inbody)
+    if not df_inbody_pdf.empty:
+        df_inbody_pdf = enriquecer_historial_corporal(
+            df_inbody_pdf,
+            str(ficha["sexo"]).strip().lower(),
+            ficha["talla_m"]
+        )
+        df_inbody_pdf = _df_para_pdf(df_inbody_pdf)
+
+    df_eval_pdf = _df_para_pdf(df_eval)
+
+    if df_inbody_pdf is not None and not df_inbody_pdf.empty:
+        ultimo_corporal = df_inbody_pdf.copy()
+        if "fecha" in ultimo_corporal.columns:
+            ultimo_corporal["fecha_orden"] = pd.to_datetime(ultimo_corporal["fecha"], errors="coerce")
+            ultimo_corporal = ultimo_corporal.sort_values("fecha_orden", ascending=False)
+        ult = ultimo_corporal.iloc[0]
+
+        story.append(Paragraph("Diagnóstico corporal actual", styles["SubTitulo"]))
+        story.append(Paragraph(f"<b>Diagnóstico:</b> {_texto_seguro(ult.get('diagnostico_corporal'))}", styles["Caja"]))
+        story.append(Paragraph(f"<b>Sugerencia:</b> {_texto_seguro(ult.get('sugerencia_corporal'))}", styles["Caja"]))
+        story.append(Paragraph(f"<b>Motivos:</b> {_texto_seguro(ult.get('motivos_corporal'))}", styles["Caja"]))
+        story.append(Spacer(1, 0.25 * cm))
+
+    story.append(Paragraph("Historial de peso e IMC", styles["SubTitulo"]))
+    story.append(_tabla_pdf_desde_df(
+        df_peso_pdf,
+        columnas=["fecha", "peso_kg", "imc"],
+        titulos=["Fecha", "Peso (kg)", "IMC"],
+        anchos_cm=[4, 4, 3],
+        styles=styles
+    ))
+    story.append(Spacer(1, 0.35 * cm))
+
+    story.append(Paragraph("Historial de composición corporal", styles["SubTitulo"]))
+    story.append(_tabla_pdf_desde_df(
+        df_inbody_pdf,
+        columnas=[
+            "fecha",
+            "peso_kg",
+            "imc",
+            "grasa_corporal_pct",
+            "masa_muscular_kg",
+            "agua_corporal_pct",
+            "grasa_visceral",
+            "diagnostico_corporal"
+        ],
+        titulos=[
+            "Fecha",
+            "Peso",
+            "IMC",
+            "% Grasa",
+            "Músculo kg",
+            "% Agua",
+            "Visceral",
+            "Diagnóstico"
+        ],
+        anchos_cm=[2.8, 2.1, 1.7, 2.2, 2.4, 2.1, 1.8, 4.1],
+        styles=styles
+    ))
+    story.append(Spacer(1, 0.35 * cm))
+
+    story.append(Paragraph("Evaluaciones funcionales", styles["SubTitulo"]))
+    story.append(_tabla_pdf_desde_df(
+        df_eval_pdf,
+        columnas=["fecha", "prueba", "valor_medido", "percentil", "clasificacion"],
+        titulos=["Fecha", "Prueba", "Valor", "Percentil", "Clasificación"],
+        anchos_cm=[2.8, 5.7, 2.2, 2.0, 3.5],
+        styles=styles
+    ))
+
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
+
 
 # =========================================================
 # UTILIDADES CLÍNICAS - FUNCIONALES
@@ -926,6 +1302,7 @@ def calcular_resultado(prueba, sexo, edad, altura, valor_medido):
 
     return None, "Sin clasificar", "-", "-", "-"
 
+
 # =========================================================
 # UI
 # =========================================================
@@ -1041,24 +1418,18 @@ with k3:
     with st.container(border=True):
         st.markdown("#### Estado corporal")
         if not df_inbody_export.empty and ficha["talla_m"] is not None:
-            df_corporal_tmp = df_inbody_export.copy()
+            df_corporal_tmp = enriquecer_historial_corporal(
+                df_inbody_export,
+                str(ficha["sexo"]).strip().lower(),
+                ficha["talla_m"]
+            )
             df_corporal_tmp["fecha"] = pd.to_datetime(df_corporal_tmp["fecha"], errors="coerce")
             df_corporal_tmp = df_corporal_tmp.dropna(subset=["fecha"]).sort_values("fecha", ascending=False)
             ultimo_corporal = df_corporal_tmp.iloc[0]
 
-            resultado_resumen = evaluar_perfil_morfofuncional(
-                sexo=str(ficha["sexo"]).strip().lower(),
-                peso_kg=ultimo_corporal.get("peso_kg", 0),
-                talla_m=ficha["talla_m"],
-                grasa_pct=ultimo_corporal.get("grasa_corporal_pct", 0),
-                masa_muscular_kg=ultimo_corporal.get("masa_muscular_kg", 0),
-                agua_pct=ultimo_corporal.get("agua_corporal_pct", 0),
-                grasa_visceral=ultimo_corporal.get("grasa_visceral", 0)
-            )
-
-            st.write(f"**Estado:** {resultado_resumen['estado']}")
-            st.write(f"**Grasa:** {resultado_resumen['clasif_grasa']}")
-            st.write(f"**Músculo:** {resultado_resumen['clasif_musculo']}")
+            st.write(f"**Estado:** {ultimo_corporal.get('diagnostico_corporal', '-')}")
+            st.write(f"**Grasa:** {ultimo_corporal.get('clasif_grasa', '-')}")
+            st.write(f"**Músculo:** {ultimo_corporal.get('clasif_musculo', '-')}")
         else:
             st.write("Sin registros")
 
@@ -1162,7 +1533,7 @@ with left:
             st.markdown(
                 f"""
                 <div class="result-card" style="background-color:{bg_estado}; color:{fg_estado};">
-                    Estado corporal: {resultado_corporal["estado"]}
+                    Diagnóstico corporal: {resultado_corporal["estado"]}
                 </div>
                 """,
                 unsafe_allow_html=True
@@ -1202,7 +1573,7 @@ with left:
             st.markdown(
                 f"""
                 <div class="reco-box">
-                    <b>Recomendación:</b><br>
+                    <b>Sugerencia:</b><br>
                     {resultado_corporal["recomendacion"]}
                 </div>
                 """,
@@ -1382,13 +1753,23 @@ with h1:
 
     df_inbody = obtener_historial_inbody(paciente_id)
     if not df_inbody.empty:
+        df_inbody = enriquecer_historial_corporal(
+            df_inbody,
+            str(ficha["sexo"]).strip().lower(),
+            ficha["talla_m"]
+        )
         df_inbody["fecha"] = pd.to_datetime(df_inbody["fecha"], errors="coerce")
         df_inbody = df_inbody.dropna(subset=["fecha"]).sort_values("fecha", ascending=False)
 
-        df_inbody_mostrar = df_inbody.copy()
-        df_inbody_mostrar["fecha"] = df_inbody_mostrar["fecha"].dt.strftime("%Y-%m-%d")
+        df_inbody_mostrar = agregar_identificacion_paciente(df_inbody, ficha, "Composicion_Corporal")
+        df_inbody_mostrar["fecha"] = pd.to_datetime(df_inbody_mostrar["fecha"], errors="coerce").dt.strftime("%Y-%m-%d")
 
         columnas_inbody = [
+            "Paciente",
+            "PacienteID_Ficha",
+            "Sexo",
+            "Talla_m",
+            "Origen",
             "fecha",
             "peso_kg",
             "imc",
@@ -1397,6 +1778,9 @@ with h1:
             "agua_corporal_pct",
             "grasa_visceral",
             "metabolismo_basal",
+            "diagnostico_corporal",
+            "sugerencia_corporal",
+            "motivos_corporal",
             "observaciones"
         ]
         columnas_inbody = [c for c in columnas_inbody if c in df_inbody_mostrar.columns]
