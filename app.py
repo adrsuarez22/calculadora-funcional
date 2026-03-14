@@ -1,412 +1,1574 @@
 import streamlit as st
 import pandas as pd
-import unicodedata
+import altair as alt
+from datetime import datetime, date
+from supabase import create_client, Client
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+from io import BytesIO
 
-st.set_page_config(page_title="Calculadora de condición Física", layout="centered")
+# =========================================================
+# CONFIG
+# =========================================================
+st.set_page_config(
+    page_title="Calculadora de Condición Física",
+    page_icon="💪",
+    layout="wide"
+)
+
+st.markdown("""
+<style>
+[data-testid="stAppViewContainer"] {
+    background-color: #f7f8fa;
+}
+
+[data-testid="stHeader"] {
+    background: rgba(0, 0, 0, 0);
+}
+
+[data-testid="stToolbar"] {
+    right: 1rem;
+}
+
+.block-container {
+    padding-top: 1.5rem;
+    padding-bottom: 2rem;
+    max-width: 1400px;
+}
+
+.result-card {
+    padding: 14px 16px;
+    border-radius: 10px;
+    font-size: 18px;
+    font-weight: 700;
+    margin-top: 8px;
+    margin-bottom: 10px;
+}
+
+.motivo-box {
+    background-color: #ffffff;
+    border: 1px solid #e6e9ef;
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin-bottom: 12px;
+}
+
+.reco-box {
+    background-color: #eef7ef;
+    border: 1px solid #d4ead7;
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin-bottom: 14px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# =========================================================
+# SUPABASE
+# =========================================================
+SUPABASE_URL = st.secrets["SUPABASE_URL"]
+SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# =========================================================
+# TABLAS NORMATIVAS
+# =========================================================
+TABLA_CAMINATA_6M = {
+    150: {
+        40: {2.5: 436, 10: 470, 25: 511, 50: 555, 75: 592, 90: 631, 97.5: 679},
+        50: {2.5: 434, 10: 468, 25: 509, 50: 553, 75: 590, 90: 629, 97.5: 677},
+        60: {2.5: 414, 10: 448, 25: 489, 50: 533, 75: 570, 90: 609, 97.5: 656},
+        70: {2.5: 364, 10: 397, 25: 439, 50: 483, 75: 520, 90: 558, 97.5: 606},
+        80: {2.5: 313, 10: 347, 25: 388, 50: 432, 75: 469, 90: 508, 97.5: 556},
+    },
+    160: {
+        40: {2.5: 455, 10: 489, 25: 530, 50: 574, 75: 611, 90: 650, 97.5: 697},
+        50: {2.5: 453, 10: 487, 25: 528, 50: 572, 75: 609, 90: 648, 97.5: 695},
+        60: {2.5: 433, 10: 466, 25: 508, 50: 552, 75: 588, 90: 627, 97.5: 675},
+        70: {2.5: 382, 10: 416, 25: 457, 50: 501, 75: 538, 90: 577, 97.5: 625},
+        80: {2.5: 332, 10: 366, 25: 407, 50: 451, 75: 488, 90: 526, 97.5: 574},
+    },
+    170: {
+        40: {2.5: 474, 10: 507, 25: 549, 50: 593, 75: 629, 90: 668, 97.5: 716},
+        50: {2.5: 472, 10: 505, 25: 546, 50: 590, 75: 627, 90: 666, 97.5: 714},
+        60: {2.5: 451, 10: 485, 25: 526, 50: 570, 75: 607, 90: 646, 97.5: 694},
+        70: {2.5: 401, 10: 435, 25: 476, 50: 520, 75: 557, 90: 595, 97.5: 643},
+        80: {2.5: 351, 10: 384, 25: 425, 50: 469, 75: 506, 90: 545, 97.5: 593},
+    },
+    180: {
+        40: {2.5: 492, 10: 526, 25: 567, 50: 611, 75: 648, 90: 687, 97.5: 735},
+        50: {2.5: 490, 10: 524, 25: 565, 50: 609, 75: 646, 90: 685, 97.5: 733},
+        60: {2.5: 470, 10: 503, 25: 545, 50: 589, 75: 626, 90: 664, 97.5: 712},
+        70: {2.5: 419, 10: 453, 25: 494, 50: 538, 75: 575, 90: 614, 97.5: 662},
+        80: {2.5: 369, 10: 403, 25: 444, 50: 488, 75: 525, 90: 564, 97.5: 611},
+    },
+    190: {
+        40: {2.5: 511, 10: 544, 25: 586, 50: 630, 75: 667, 90: 705, 97.5: 753},
+        50: {2.5: 509, 10: 542, 25: 584, 50: 628, 75: 665, 90: 703, 97.5: 751},
+        60: {2.5: 488, 10: 522, 25: 563, 50: 607, 75: 644, 90: 683, 97.5: 731},
+        70: {2.5: 438, 10: 472, 25: 513, 50: 557, 75: 594, 90: 633, 97.5: 680},
+        80: {2.5: 388, 10: 421, 25: 463, 50: 507, 75: 544, 90: 582, 97.5: 630},
+    }
+}
+
+TABLA_PRENSION = {
+    "Hombre": {
+        "20-24": {5: 33.9, 10: 36.8, 20: 40.5, 30: 43.2, 40: 45.7, 50: 48.0, 60: 50.4, 70: 52.9, 80: 56.0, 90: 60.1, 95: 63.6},
+        "25-29": {5: 35.5, 10: 38.5, 20: 42.1, 30: 44.8, 40: 47.1, 50: 49.3, 60: 51.5, 70: 53.9, 80: 56.7, 90: 60.7, 95: 64.0},
+        "30-34": {5: 35.0, 10: 38.3, 20: 42.2, 30: 45.0, 40: 47.4, 50: 49.7, 60: 52.0, 70: 54.4, 80: 57.4, 90: 61.5, 95: 64.9},
+        "35-39": {5: 33.8, 10: 37.3, 20: 41.5, 30: 44.5, 40: 47.1, 50: 49.5, 60: 51.9, 70: 54.4, 80: 57.5, 90: 61.8, 95: 65.3},
+        "40-44": {5: 32.3, 10: 36.0, 20: 40.4, 30: 43.6, 40: 46.3, 50: 48.8, 60: 51.2, 70: 53.9, 80: 57.1, 90: 61.5, 95: 65.1},
+        "45-49": {5: 30.6, 10: 34.4, 20: 39.0, 30: 42.3, 40: 45.1, 50: 47.6, 60: 50.2, 70: 52.9, 80: 56.2, 90: 60.7, 95: 64.4},
+        "50-54": {5: 28.9, 10: 32.8, 20: 37.4, 30: 40.7, 40: 43.5, 50: 46.2, 60: 48.8, 70: 51.6, 80: 54.8, 90: 59.4, 95: 63.1},
+        "55-59": {5: 27.2, 10: 31.0, 20: 35.6, 30: 38.9, 40: 41.7, 50: 44.4, 60: 47.0, 70: 49.8, 80: 53.1, 90: 57.7, 95: 61.4},
+        "60-64": {5: 25.5, 10: 29.1, 20: 33.6, 30: 36.9, 40: 39.7, 50: 42.4, 60: 45.0, 70: 47.8, 80: 51.1, 90: 55.6, 95: 59.3},
+        "65-69": {5: 23.7, 10: 27.2, 20: 31.5, 30: 34.7, 40: 37.5, 50: 40.1, 60: 42.8, 70: 45.6, 80: 48.8, 90: 53.2, 95: 56.8},
+        "70-74": {5: 21.9, 10: 25.2, 20: 29.3, 30: 32.4, 40: 35.1, 50: 37.7, 60: 40.3, 70: 43.1, 80: 46.3, 90: 50.6, 95: 54.1},
+        "75-79": {5: 20.0, 10: 23.1, 20: 27.0, 30: 29.9, 40: 32.5, 50: 35.1, 60: 37.6, 70: 40.3, 80: 43.5, 90: 47.7, 95: 51.1},
+        "80-84": {5: 18.0, 10: 20.8, 20: 24.5, 30: 27.3, 40: 29.8, 50: 32.3, 60: 34.8, 70: 37.5, 80: 40.5, 90: 44.7, 95: 48.0},
+        "85-89": {5: 15.9, 10: 18.5, 20: 21.9, 30: 24.6, 40: 27.0, 50: 29.4, 60: 31.8, 70: 34.4, 80: 37.4, 90: 41.5, 95: 44.6},
+        "90-94": {5: 13.7, 10: 16.1, 20: 19.2, 30: 21.7, 40: 24.0, 50: 26.3, 60: 28.7, 70: 31.2, 80: 34.2, 90: 38.1, 95: 41.2},
+        "95-99": {5: 11.3, 10: 13.5, 20: 16.4, 30: 18.8, 40: 20.9, 50: 23.1, 60: 25.4, 70: 27.9, 80: 30.8, 90: 34.6, 95: 37.5},
+        "+100": {5: 8.8, 10: 10.8, 20: 13.5, 30: 15.7, 40: 17.8, 50: 19.8, 60: 22.0, 70: 24.5, 80: 27.2, 90: 30.9, 95: 33.8},
+    },
+    "Mujer": {
+        "20-24": {5: 19.7, 10: 21.7, 20: 24.0, 30: 25.7, 40: 27.2, 50: 28.6, 60: 30.0, 70: 31.6, 80: 33.6, 90: 36.6, 95: 39.1},
+        "25-29": {5: 20.0, 10: 22.0, 20: 24.5, 30: 26.3, 40: 27.9, 50: 29.4, 60: 30.9, 70: 32.6, 80: 34.6, 90: 37.4, 95: 39.7},
+        "30-34": {5: 19.6, 10: 21.8, 20: 24.4, 30: 26.4, 40: 28.1, 50: 29.7, 60: 31.3, 70: 33.1, 80: 35.2, 90: 38.0, 95: 40.4},
+        "35-39": {5: 19.0, 10: 21.3, 20: 24.1, 30: 26.2, 40: 28.0, 50: 29.7, 60: 31.4, 70: 33.2, 80: 35.4, 90: 38.4, 95: 40.8},
+        "40-44": {5: 18.3, 10: 20.7, 20: 23.7, 30: 25.8, 40: 27.6, 50: 29.4, 60: 31.1, 70: 33.0, 80: 35.2, 90: 38.3, 95: 40.8},
+        "45-49": {5: 17.6, 10: 20.1, 20: 23.1, 30: 25.2, 40: 27.1, 50: 28.9, 60: 30.6, 70: 32.5, 80: 34.8, 90: 37.9, 95: 40.4},
+        "50-54": {5: 16.9, 10: 19.4, 20: 22.4, 30: 24.5, 40: 26.4, 50: 28.2, 60: 29.9, 70: 31.8, 80: 34.0, 90: 37.1, 95: 39.7},
+        "55-59": {5: 16.1, 10: 18.5, 20: 21.5, 30: 23.7, 40: 25.5, 50: 27.3, 60: 29.0, 70: 30.9, 80: 33.0, 90: 36.1, 95: 38.6},
+        "60-64": {5: 15.2, 10: 17.6, 20: 20.6, 30: 22.7, 40: 24.5, 50: 26.2, 60: 27.9, 70: 29.7, 80: 31.8, 90: 34.9, 95: 37.4},
+        "65-69": {5: 14.3, 10: 16.6, 20: 19.5, 30: 21.6, 40: 23.3, 50: 25.0, 60: 26.6, 70: 28.4, 80: 30.5, 90: 33.4, 95: 35.8},
+        "70-74": {5: 13.2, 10: 15.5, 20: 18.3, 30: 20.3, 40: 22.0, 50: 23.6, 60: 25.2, 70: 26.9, 80: 28.9, 90: 31.8, 95: 34.1},
+        "75-79": {5: 12.0, 10: 14.3, 20: 17.0, 30: 18.9, 40: 20.5, 50: 22.1, 60: 23.6, 70: 25.2, 80: 27.2, 90: 29.9, 95: 32.2},
+        "80-84": {5: 10.7, 10: 12.9, 20: 15.5, 30: 17.4, 40: 18.9, 50: 20.4, 60: 21.9, 70: 23.5, 80: 25.3, 90: 28.0, 95: 30.2},
+        "85-89": {5: 9.3, 10: 11.4, 20: 13.9, 30: 15.7, 40: 17.2, 50: 18.6, 60: 20.0, 70: 21.5, 80: 23.3, 90: 25.9, 95: 28.0},
+        "90-94": {5: 7.8, 10: 9.8, 20: 12.2, 30: 13.9, 40: 15.3, 50: 16.7, 60: 18.0, 70: 19.5, 80: 21.2, 90: 23.6, 95: 25.7},
+        "95-99": {5: 6.1, 10: 8.0, 20: 10.3, 30: 11.9, 40: 13.3, 50: 14.6, 60: 15.9, 70: 17.3, 80: 18.9, 90: 21.2, 95: 23.2},
+        "+100": {5: 4.2, 10: 6.1, 20: 8.3, 30: 9.8, 40: 11.2, 50: 12.4, 60: 13.6, 70: 14.9, 80: 16.5, 90: 18.7, 95: 20.6},
+    }
+}
+
+TABLA_SILLA = {
+    "Hombre": {
+        "65-69": {10: 12, 20: 13, 30: 14, 40: 15, 50: 16, 60: 16, 70: 17, 80: 19, 90: 21, 100: 28},
+        "70-74": {10: 11, 20: 13, 30: 14, 40: 15, 50: 15, 60: 16, 70: 17, 80: 18, 90: 20, 100: 29},
+        "75-79": {10: 10, 20: 12, 30: 13, 40: 14, 50: 14, 60: 15, 70: 16, 80: 17, 90: 19, 100: 25},
+        "80-84": {10: 9, 20: 10, 30: 11, 40: 12, 50: 14, 60: 15, 70: 16, 80: 17, 90: 18, 100: 22},
+        "+84": {10: 9, 20: 9, 30: 12, 40: 13, 50: 14, 60: 14, 70: 16, 80: 18, 90: 20, 100: 21},
+    },
+    "Mujer": {
+        "65-69": {10: 11, 20: 12, 30: 13, 40: 14, 50: 15, 60: 15, 70: 16, 80: 17, 90: 19, 100: 30},
+        "70-74": {10: 10, 20: 12, 30: 12, 40: 13, 50: 14, 60: 15, 70: 16, 80: 17, 90: 19, 100: 27},
+        "75-79": {10: 10, 20: 11, 30: 12, 40: 13, 50: 14, 60: 14, 70: 15, 80: 16, 90: 18, 100: 24},
+        "80-84": {10: 9, 20: 10, 30: 11, 40: 12, 50: 13, 60: 14, 70: 15, 80: 16, 90: 18, 100: 24},
+        "+84": {10: 6, 20: 8, 30: 9, 40: 11, 50: 12, 60: 14, 70: 14, 80: 16, 90: 17, 100: 18},
+    }
+}
+
+# =========================================================
+# BASE DE DATOS
+# =========================================================
+def guardar_evaluacion(paciente_nombre, sexo, edad, prueba, valor_medido, percentil, clasificacion):
+    payload = {
+        "fecha": datetime.now().strftime("%Y-%m-%d"),
+        "paciente": str(paciente_nombre).strip(),
+        "sexo": str(sexo).strip().lower(),
+        "edad": int(edad),
+        "prueba": str(prueba).strip(),
+        "valor_medido": float(valor_medido),
+        "percentil": round(float(percentil), 1) if percentil is not None else None,
+        "clasificacion": str(clasificacion).strip()
+    }
+    return supabase.table("evaluaciones").insert(payload).execute()
 
 
-# =========================
-# Utilidades generales
-# =========================
-def normalizar_texto(texto):
-    texto = str(texto).strip().lower()
-    texto = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode("ascii")
-    texto = texto.replace("(", "").replace(")", "")
-    texto = texto.replace("%", "")
-    texto = texto.replace(".", "").replace(",", "")
-    texto = texto.replace("-", "_").replace("/", "_")
-    texto = "_".join(texto.split())
-    return texto
+def guardar_paciente(nombre, sexo, talla_m):
+    nombre_limpio = str(nombre).strip()
+    sexo_limpio = str(sexo).strip().lower()
+
+    if not nombre_limpio:
+        raise ValueError("El nombre del paciente está vacío.")
+
+    if talla_m is None or float(talla_m) <= 0:
+        raise ValueError("La talla debe ser mayor a 0.")
+
+    respuesta = supabase.table("pacientes").select("id,nombre").execute()
+    existentes = respuesta.data if respuesta.data else []
+
+    for p in existentes:
+        if str(p["nombre"]).strip().lower() == nombre_limpio.lower():
+            raise ValueError("Ese paciente ya existe.")
+
+    payload = {
+        "nombre": nombre_limpio,
+        "sexo": sexo_limpio,
+        "talla_m": round(float(talla_m), 2)
+    }
+    return supabase.table("pacientes").insert(payload).execute()
 
 
-def normalizar_columnas(df):
-    df = df.copy()
-    df.columns = [normalizar_texto(c) for c in df.columns]
-    return df
+def guardar_peso(paciente_id, fecha_medicion, peso_kg, talla_m):
+    if paciente_id is None:
+        raise ValueError("No se encontró el id del paciente.")
+
+    if talla_m is None or float(talla_m) <= 0:
+        raise ValueError("El paciente no tiene una talla válida cargada.")
+
+    if peso_kg is None or float(peso_kg) <= 0:
+        raise ValueError("El peso debe ser mayor a 0.")
+
+    imc = round(float(peso_kg) / (float(talla_m) ** 2), 2)
+
+    payload = {
+        "paciente_id": int(paciente_id),
+        "fecha": str(fecha_medicion),
+        "peso_kg": float(peso_kg),
+        "imc": imc
+    }
+
+    return supabase.table("seguimiento_peso").insert(payload).execute()
 
 
-def buscar_columna(df, candidatos, fallback_index=None, obligatoria=True):
-    columnas = list(df.columns)
-    columnas_set = set(columnas)
+def clasificar_imc(imc_calculado):
+    if imc_calculado < 18.5:
+        return "Bajo peso", "🔵"
+    elif imc_calculado < 25:
+        return "Normal", "🟢"
+    elif imc_calculado < 30:
+        return "Sobrepeso", "🟡"
+    else:
+        return "Obesidad", "🔴"
 
-    for c in candidatos:
-        c_norm = normalizar_texto(c)
-        if c_norm in columnas_set:
-            return c_norm
 
-    if fallback_index is not None and len(columnas) > fallback_index:
-        return columnas[fallback_index]
+def eliminar_evaluacion(id_registro):
+    return supabase.table("evaluaciones").delete().eq("id", id_registro).execute()
 
-    if obligatoria:
-        raise ValueError(
-            f"No se encontró ninguna de estas columnas: {candidatos}. "
-            f"Columnas disponibles: {columnas}"
+
+def obtener_historial_paciente(paciente):
+    try:
+        respuesta = (
+            supabase.table("evaluaciones")
+            .select("*")
+            .eq("paciente", str(paciente).strip())
+            .order("fecha")
+            .execute()
         )
-    return None
+        if respuesta.data:
+            return pd.DataFrame(respuesta.data)
+        return pd.DataFrame()
+    except Exception as e:
+        st.error(f"Error al leer historial: {e}")
+        return pd.DataFrame()
 
 
-def convertir_numerico(df, columnas):
-    for c in columnas:
-        if c in df.columns:
-            df[c] = pd.to_numeric(df[c], errors="coerce")
-    return df
+def obtener_historial_peso(paciente_id):
+    try:
+        respuesta = (
+            supabase.table("seguimiento_peso")
+            .select("id,paciente_id,fecha,peso_kg,imc,created_at")
+            .eq("paciente_id", int(paciente_id))
+            .order("fecha")
+            .execute()
+        )
+
+        if respuesta.data:
+            return pd.DataFrame(respuesta.data)
+
+        return pd.DataFrame(columns=["fecha", "peso_kg", "imc"])
+    except Exception as e:
+        st.error(f"Error al leer historial de peso: {e}")
+        return pd.DataFrame(columns=["fecha", "peso_kg", "imc"])
 
 
-def normalizar_sexo_serie(serie):
-    return (
-        serie.astype(str)
-        .str.strip()
-        .str.lower()
-        .replace({
-            "hombres": "hombre",
-            "mujeres": "mujer",
-            "male": "hombre",
-            "female": "mujer",
-            "m": "hombre",
-            "f": "mujer"
-        })
+def obtener_pacientes():
+    try:
+        respuesta = (
+            supabase.table("pacientes")
+            .select("id,nombre,sexo,talla_m")
+            .order("nombre")
+            .execute()
+        )
+        return respuesta.data if respuesta.data else []
+    except Exception as e:
+        st.error(f"Error al leer pacientes: {e}")
+        return []
+
+
+def guardar_inbody(
+    paciente_id,
+    fecha_estudio,
+    peso_kg,
+    talla_m,
+    grasa_corporal_pct,
+    masa_muscular_kg,
+    agua_corporal_pct,
+    grasa_visceral,
+    metabolismo_basal,
+    observaciones
+):
+    imc_calculado = round(float(peso_kg) / (float(talla_m) ** 2), 2) if peso_kg and talla_m else None
+
+    payload = {
+        "paciente_id": int(paciente_id),
+        "fecha": str(fecha_estudio),
+        "peso_kg": float(peso_kg) if peso_kg is not None else None,
+        "imc": float(imc_calculado) if imc_calculado is not None else None,
+        "grasa_corporal_pct": float(grasa_corporal_pct) if grasa_corporal_pct is not None else None,
+        "masa_muscular_kg": float(masa_muscular_kg) if masa_muscular_kg is not None else None,
+        "agua_corporal_pct": float(agua_corporal_pct) if agua_corporal_pct is not None else None,
+        "grasa_visceral": float(grasa_visceral) if grasa_visceral is not None else None,
+        "metabolismo_basal": float(metabolismo_basal) if metabolismo_basal is not None else None,
+        "observaciones": str(observaciones).strip() if observaciones else None
+    }
+
+    return supabase.table("inbody_registros").insert(payload).execute()
+
+
+def obtener_historial_inbody(paciente_id):
+    try:
+        respuesta = (
+            supabase.table("inbody_registros")
+            .select("*")
+            .eq("paciente_id", int(paciente_id))
+            .order("fecha", desc=True)
+            .execute()
+        )
+
+        if respuesta.data:
+            return pd.DataFrame(respuesta.data)
+
+        return pd.DataFrame()
+
+    except Exception as e:
+        st.error(f"Error al leer historial de composición corporal: {e}")
+        return pd.DataFrame()
+
+
+def obtener_ficha_paciente(paciente_nombre):
+    try:
+        paciente_nombre = str(paciente_nombre).strip()
+
+        respuesta_paciente = (
+            supabase.table("pacientes")
+            .select("id,nombre,sexo,talla_m,created_at")
+            .eq("nombre", paciente_nombre)
+            .limit(1)
+            .execute()
+        )
+
+        datos_paciente = respuesta_paciente.data[0] if respuesta_paciente.data else {}
+        df_historial = obtener_historial_paciente(paciente_nombre)
+
+        cantidad_evaluaciones = 0
+        ultima_fecha = "-"
+        ultima_clasificacion = "-"
+        ultima_prueba = "-"
+
+        if not df_historial.empty:
+            if "fecha" in df_historial.columns:
+                df_historial["fecha"] = pd.to_datetime(df_historial["fecha"], errors="coerce")
+                df_historial = df_historial.sort_values("fecha", ascending=False)
+
+            cantidad_evaluaciones = len(df_historial)
+
+            if "fecha" in df_historial.columns and pd.notna(df_historial.iloc[0]["fecha"]):
+                ultima_fecha = df_historial.iloc[0]["fecha"].strftime("%d-%m-%Y")
+
+            if "clasificacion" in df_historial.columns and pd.notna(df_historial.iloc[0]["clasificacion"]):
+                ultima_clasificacion = str(df_historial.iloc[0]["clasificacion"])
+
+            if "prueba" in df_historial.columns and pd.notna(df_historial.iloc[0]["prueba"]):
+                ultima_prueba = str(df_historial.iloc[0]["prueba"])
+
+        return {
+            "id": datos_paciente.get("id"),
+            "nombre": datos_paciente.get("nombre", paciente_nombre),
+            "sexo": datos_paciente.get("sexo", "-"),
+            "talla_m": datos_paciente.get("talla_m"),
+            "cantidad_evaluaciones": cantidad_evaluaciones,
+            "ultima_fecha": ultima_fecha,
+            "ultima_clasificacion": ultima_clasificacion,
+            "ultima_prueba": ultima_prueba
+        }
+
+    except Exception as e:
+        st.error(f"Error al cargar ficha del paciente: {e}")
+        return {
+            "id": None,
+            "nombre": paciente_nombre,
+            "sexo": "-",
+            "talla_m": None,
+            "cantidad_evaluaciones": 0,
+            "ultima_fecha": "-",
+            "ultima_clasificacion": "-",
+            "ultima_prueba": "-"
+        }
+
+
+def preparar_df_exportacion(df):
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    df_out = df.copy()
+
+    for col in df_out.columns:
+        if "fecha" in col.lower() or "created" in col.lower():
+            try:
+                df_out[col] = pd.to_datetime(df_out[col], errors="coerce")
+                df_out[col] = df_out[col].dt.strftime("%Y-%m-%d")
+            except Exception:
+                pass
+
+    return df_out
+
+
+def generar_excel_paciente(ficha, df_peso, df_inbody, df_eval):
+    output = BytesIO()
+
+    ficha_df = pd.DataFrame([{
+        "Paciente": ficha["nombre"],
+        "Sexo": ficha["sexo"],
+        "Talla_m": ficha["talla_m"],
+        "CantidadEvaluaciones": ficha["cantidad_evaluaciones"],
+        "UltimaFechaEvaluacion": ficha["ultima_fecha"],
+        "UltimaClasificacion": ficha["ultima_clasificacion"],
+        "UltimaPrueba": ficha["ultima_prueba"]
+    }])
+
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        preparar_df_exportacion(ficha_df).to_excel(writer, sheet_name="Ficha", index=False)
+        preparar_df_exportacion(df_peso).to_excel(writer, sheet_name="Peso_IMC", index=False)
+        preparar_df_exportacion(df_inbody).to_excel(writer, sheet_name="Composicion_Corporal", index=False)
+        preparar_df_exportacion(df_eval).to_excel(writer, sheet_name="Evaluaciones", index=False)
+
+    output.seek(0)
+    return output
+
+
+def escribir_bloque_pdf(pdf, y, titulo, df, columnas, anchos):
+    pdf.setFont("Helvetica-Bold", 12)
+    pdf.drawString(40, y, titulo)
+    y -= 18
+
+    pdf.setFont("Helvetica-Bold", 8)
+    x = 40
+    for col, ancho in zip(columnas, anchos):
+        pdf.drawString(x, y, str(col))
+        x += ancho
+
+    y -= 14
+    pdf.setFont("Helvetica", 8)
+
+    if df is None or df.empty:
+        pdf.drawString(40, y, "Sin datos")
+        return y - 20
+
+    for _, row in df.iterrows():
+        x = 40
+        for col, ancho in zip(columnas, anchos):
+            valor = row.get(col, "")
+            if pd.isna(valor):
+                valor = ""
+            valor = str(valor)
+            if len(valor) > 20:
+                valor = valor[:17] + "..."
+            pdf.drawString(x, y, valor)
+            x += ancho
+
+        y -= 12
+
+        if y < 70:
+            pdf.showPage()
+            y = 750
+            pdf.setFont("Helvetica", 8)
+
+    return y - 12
+
+
+def generar_pdf_paciente(ficha, df_peso, df_inbody, df_eval):
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=letter)
+    y = 760
+
+    pdf.setFont("Helvetica-Bold", 16)
+    pdf.drawString(40, y, "Reporte completo del paciente")
+    y -= 24
+
+    pdf.setFont("Helvetica", 11)
+    pdf.drawString(40, y, f"Paciente: {ficha['nombre']}")
+    y -= 16
+    pdf.drawString(40, y, f"Sexo: {ficha['sexo']}")
+    y -= 16
+    pdf.drawString(40, y, f"Talla: {ficha['talla_m']} m")
+    y -= 16
+    pdf.drawString(40, y, f"Fecha del reporte: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    y -= 26
+
+    df_peso_pdf = preparar_df_exportacion(df_peso)
+    df_inbody_pdf = preparar_df_exportacion(df_inbody)
+    df_eval_pdf = preparar_df_exportacion(df_eval)
+
+    y = escribir_bloque_pdf(
+        pdf, y, "Historial de peso e IMC",
+        df_peso_pdf,
+        ["fecha", "peso_kg", "imc"],
+        [120, 120, 120]
     )
 
+    y = escribir_bloque_pdf(
+        pdf, y, "Historial de composición corporal",
+        df_inbody_pdf,
+        ["fecha", "peso_kg", "imc", "grasa_corporal_pct", "masa_muscular_kg", "agua_corporal_pct"],
+        [70, 65, 55, 80, 80, 80]
+    )
 
-def formatear_sexo_ui(valor):
-    v = str(valor).strip().lower()
-    if v == "hombre":
-        return "hombre"
-    if v == "mujer":
-        return "mujer"
-    return v
+    y = escribir_bloque_pdf(
+        pdf, y, "Evaluaciones funcionales",
+        df_eval_pdf,
+        ["fecha", "prueba", "valor_medido", "percentil", "clasificacion"],
+        [70, 150, 70, 70, 100]
+    )
 
+    pdf.save()
+    buffer.seek(0)
+    return buffer
 
-def edad_a_grupo_silla(edad):
-    if 65 <= edad <= 69:
-        return "AG1"
-    elif 70 <= edad <= 74:
-        return "AG2"
-    elif 75 <= edad <= 79:
-        return "AG3"
-    elif 80 <= edad <= 84:
-        return "AG4"
-    elif edad >= 85:
-        return "AG5"
-    return None
+# =========================================================
+# UTILIDADES CLÍNICAS - COMPOSICIÓN CORPORAL
+# =========================================================
+def clasificacion_grasa_corporal(sexo, grasa_pct):
+    sexo = str(sexo).strip().lower()
 
+    if grasa_pct is None:
+        return "Sin clasificar"
 
-def parsear_rango_edad(texto):
-    t = str(texto).strip().replace(" ", "")
-    if "-" in t:
-        partes = t.split("-")
-        try:
-            return int(partes[0]), int(partes[1])
-        except:
-            return None
-    if t.startswith("+"):
-        try:
-            inicio = int(t[1:])
-            return inicio, 999
-        except:
-            return None
-    return None
+    if sexo == "hombre":
+        if grasa_pct < 8:
+            return "Muy bajo"
+        elif grasa_pct < 19:
+            return "Normal"
+        elif grasa_pct <= 25:
+            return "Alto"
+        else:
+            return "Obesidad"
 
+    if sexo == "mujer":
+        if grasa_pct < 21:
+            return "Muy bajo"
+        elif grasa_pct < 33:
+            return "Normal"
+        elif grasa_pct <= 39:
+            return "Alto"
+        else:
+            return "Obesidad"
 
-def buscar_rango_edad_prension(edad, rangos_disponibles):
-    for r in rangos_disponibles:
-        parsed = parsear_rango_edad(r)
-        if parsed is None:
-            continue
-        desde, hasta = parsed
-        if desde <= edad <= hasta:
-            return r
-    return None
+    return "Sin clasificar"
 
 
-def formatear_percentil(p):
-    if p is None:
-        return "N/D"
-    if float(p).is_integer():
-        return str(int(p))
-    return f"{p:.1f}"
+def clasificacion_agua_corporal(sexo, agua_pct):
+    sexo = str(sexo).strip().lower()
+
+    if agua_pct is None:
+        return "Sin clasificar"
+
+    if sexo == "hombre":
+        if agua_pct < 50:
+            return "Bajo"
+        elif agua_pct <= 65:
+            return "Normal"
+        else:
+            return "Alto"
+
+    if sexo == "mujer":
+        if agua_pct < 45:
+            return "Bajo"
+        elif agua_pct <= 60:
+            return "Normal"
+        else:
+            return "Alto"
+
+    return "Sin clasificar"
 
 
-def obtener_color_percentil(p):
-    if p is None:
-        return "#9E9E9E"
-    if p < 10:
-        return "#D32F2F"   # rojo
-    elif p < 25:
-        return "#F57C00"   # naranja
-    elif p <= 75:
-        return "#388E3C"   # verde
-    else:
-        return "#1976D2"   # azul
+def clasificacion_grasa_visceral(grasa_visceral):
+    if grasa_visceral is None:
+        return "Sin clasificar"
 
-
-def obtener_etiqueta_semaforo(p):
-    if p is None:
-        return "Sin clasificación"
-    if p < 10:
-        return "Muy bajo"
-    elif p < 25:
-        return "Bajo"
-    elif p <= 75:
+    if grasa_visceral <= 9:
         return "Normal"
-    else:
+    elif grasa_visceral <= 14:
         return "Alto"
+    else:
+        return "Muy alto"
 
 
-def interpretar_clinicamente(p, prueba):
-    if p is None:
-        return "No se pudo estimar el percentil."
+def calcular_masa_muscular_relativa_pct(peso_kg, masa_muscular_kg):
+    if peso_kg is None or masa_muscular_kg is None:
+        return None
+    if float(peso_kg) <= 0:
+        return None
+    return round((float(masa_muscular_kg) / float(peso_kg)) * 100, 2)
 
-    if prueba == "Caminata 6 minutos":
-        if p < 10:
-            return "Capacidad aeróbica muy disminuida para su referencia. Conviene seguimiento clínico y plan de intervención."
-        elif p < 25:
-            return "Capacidad aeróbica por debajo de lo esperado. Sugiere margen claro de mejora funcional."
-        elif p <= 75:
-            return "Capacidad aeróbica dentro del rango funcional esperado."
+
+def clasificacion_masa_muscular_relativa(sexo, musculo_relativo_pct):
+    sexo = str(sexo).strip().lower()
+
+    if musculo_relativo_pct is None:
+        return "Sin clasificar"
+
+    if sexo == "hombre":
+        if musculo_relativo_pct < 33:
+            return "Bajo"
+        elif musculo_relativo_pct <= 39:
+            return "Normal"
         else:
-            return "Capacidad aeróbica por encima de lo esperado para su referencia."
+            return "Alto"
 
-    if prueba == "Fuerza prensión":
-        if p < 10:
-            return "Fuerza de prensión muy baja para su referencia. Puede sugerir fragilidad o pérdida de fuerza significativa."
-        elif p < 25:
-            return "Fuerza de prensión baja. Conviene seguimiento y trabajo específico de fuerza."
-        elif p <= 75:
-            return "Fuerza de prensión dentro del rango esperado."
+    if sexo == "mujer":
+        if musculo_relativo_pct < 24:
+            return "Bajo"
+        elif musculo_relativo_pct <= 30:
+            return "Normal"
         else:
-            return "Fuerza de prensión por encima de la media para su referencia."
+            return "Alto"
 
-    if prueba == "Levantarse de silla":
-        if p < 10:
-            return "Rendimiento funcional muy bajo en miembros inferiores. Sugiere menor fuerza funcional y necesidad de intervención."
-        elif p < 25:
-            return "Rendimiento bajo para su referencia. Conviene seguimiento y entrenamiento funcional."
-        elif p <= 75:
-            return "Rendimiento funcional dentro del rango esperado."
-        else:
-            return "Rendimiento funcional por encima de lo esperado."
-
-    return "Interpretación no disponible."
+    return "Sin clasificar"
 
 
-def estimar_percentil(valor_medido, df_ref, col_valor, col_percentil):
-    ref = df_ref[[col_valor, col_percentil]].dropna().copy()
-    ref = ref.sort_values(by=col_valor).drop_duplicates(subset=[col_valor, col_percentil])
+def color_estado_corporal(estado):
+    mapa = {
+        "Normal": ("#2e7d32", "#ffffff"),
+        "Bajo peso": ("#1976d2", "#ffffff"),
+        "Riesgo sarcopénico": ("#ef6c00", "#ffffff"),
+        "Sobrepeso": ("#f9a825", "#1f1f1f"),
+        "Sobrepeso muscular": ("#00897b", "#ffffff"),
+        "Obesidad": ("#c62828", "#ffffff"),
+        "Riesgo cardiometabólico": ("#ad1457", "#ffffff"),
+        "Riesgo cardiometabólico moderado": ("#6a1b9a", "#ffffff"),
+        "Sin clasificar": ("#757575", "#ffffff")
+    }
+    return mapa.get(estado, ("#757575", "#ffffff"))
 
-    if ref.empty:
-        return None, "Sin datos de referencia.", None
 
-    valores = ref[col_valor].tolist()
-    percentiles = ref[col_percentil].tolist()
+def generar_recomendacion_corporal(estado, clasif_grasa, clasif_visceral, clasif_musculo):
+    if estado in ["Obesidad", "Riesgo cardiometabólico", "Riesgo cardiometabólico moderado"]:
+        return "Programa de reducción de grasa + ejercicio de fuerza + control cardiometabólico."
+    if estado == "Riesgo sarcopénico":
+        return "Priorizar ejercicio de fuerza, aumento de masa muscular y seguimiento funcional."
+    if estado == "Sobrepeso muscular":
+        return "Mantener masa muscular, controlar evolución y ajustar plan nutricional según objetivo."
+    if estado == "Sobrepeso":
+        return "Plan de control de peso con actividad física regular y seguimiento de composición corporal."
+    if estado == "Bajo peso":
+        return "Evaluar aporte nutricional y preservar o mejorar masa muscular."
+    if estado == "Normal":
+        if clasif_musculo == "Bajo":
+            return "Estado general aceptable, pero conviene reforzar trabajo de fuerza."
+        return "Mantener hábitos actuales y seguimiento periódico."
+    return "Completar datos clínicos y repetir control."
 
-    exactos = ref[ref[col_valor] == valor_medido]
-    if not exactos.empty:
-        p = float(exactos.iloc[0][col_percentil])
-        return p, f"Percentil exacto: P{formatear_percentil(p)}", f"P{formatear_percentil(p)}"
 
-    if valor_medido < min(valores):
-        p = float(percentiles[0])
-        return p, "Por debajo del percentil mínimo disponible.", f"< P{formatear_percentil(p)}"
+def evaluar_perfil_morfofuncional(sexo, peso_kg, talla_m, grasa_pct, masa_muscular_kg, agua_pct, grasa_visceral):
+    imc = round(float(peso_kg) / (float(talla_m) ** 2), 2) if peso_kg and talla_m else None
+    clasif_imc = clasificar_imc(imc)[0] if imc is not None else "Sin clasificar"
+    clasif_grasa = clasificacion_grasa_corporal(sexo, grasa_pct)
+    clasif_agua = clasificacion_agua_corporal(sexo, agua_pct)
+    clasif_visceral = clasificacion_grasa_visceral(grasa_visceral)
+    musculo_rel_pct = calcular_masa_muscular_relativa_pct(peso_kg, masa_muscular_kg)
+    clasif_musculo = clasificacion_masa_muscular_relativa(sexo, musculo_rel_pct)
 
-    if valor_medido > max(valores):
-        p = float(percentiles[-1])
-        return p, "Por encima del percentil máximo disponible.", f"> P{formatear_percentil(p)}"
+    motivos = []
 
-    for i in range(len(ref) - 1):
-        v1 = float(ref.iloc[i][col_valor])
-        v2 = float(ref.iloc[i + 1][col_valor])
-        p1 = float(ref.iloc[i][col_percentil])
-        p2 = float(ref.iloc[i + 1][col_percentil])
+    if clasif_imc == "Bajo peso":
+        motivos.append("IMC en rango de bajo peso")
+    elif clasif_imc == "Sobrepeso":
+        motivos.append("IMC en rango de sobrepeso")
+    elif clasif_imc == "Obesidad":
+        motivos.append("IMC en rango de obesidad")
+
+    if clasif_grasa in ["Alto", "Obesidad"]:
+        motivos.append("% grasa corporal elevada")
+
+    if clasif_visceral in ["Alto", "Muy alto"]:
+        motivos.append(f"grasa visceral {clasif_visceral.lower()}")
+
+    if clasif_musculo == "Bajo":
+        motivos.append("masa muscular relativa baja")
+    elif clasif_musculo == "Normal":
+        motivos.append("masa muscular relativa normal")
+    elif clasif_musculo == "Alto":
+        motivos.append("masa muscular relativa alta")
+
+    estado = "Normal"
+
+    if clasif_visceral == "Muy alto":
+        estado = "Riesgo cardiometabólico"
+    elif clasif_visceral == "Alto" and clasif_grasa in ["Alto", "Obesidad"]:
+        estado = "Riesgo cardiometabólico moderado"
+    elif clasif_imc == "Obesidad" or (clasif_imc in ["Sobrepeso", "Obesidad"] and clasif_grasa == "Obesidad"):
+        estado = "Obesidad"
+    elif clasif_imc == "Sobrepeso" and clasif_grasa in ["Alto", "Obesidad"] and clasif_musculo != "Alto":
+        estado = "Sobrepeso"
+    elif clasif_imc == "Sobrepeso" and clasif_musculo == "Alto" and clasif_grasa == "Normal":
+        estado = "Sobrepeso muscular"
+    elif clasif_imc == "Normal" and clasif_musculo == "Bajo":
+        estado = "Riesgo sarcopénico"
+    elif clasif_imc == "Bajo peso":
+        estado = "Bajo peso"
+    else:
+        estado = "Normal"
+
+    recomendacion = generar_recomendacion_corporal(
+        estado=estado,
+        clasif_grasa=clasif_grasa,
+        clasif_visceral=clasif_visceral,
+        clasif_musculo=clasif_musculo
+    )
+
+    return {
+        "imc": imc,
+        "clasif_imc": clasif_imc,
+        "clasif_grasa": clasif_grasa,
+        "clasif_agua": clasif_agua,
+        "clasif_visceral": clasif_visceral,
+        "musculo_rel_pct": musculo_rel_pct,
+        "clasif_musculo": clasif_musculo,
+        "estado": estado,
+        "motivos": motivos,
+        "recomendacion": recomendacion
+    }
+
+# =========================================================
+# UTILIDADES CLÍNICAS - FUNCIONALES
+# =========================================================
+def clasificar_percentil(percentil):
+    if percentil is None:
+        return "Sin clasificar"
+    if percentil < 10:
+        return "Muy bajo"
+    if percentil < 25:
+        return "Bajo"
+    if percentil < 50:
+        return "Ligeramente bajo"
+    if percentil < 75:
+        return "Normal"
+    if percentil < 90:
+        return "Bueno"
+    return "Muy bueno"
+
+
+def color_clasificacion(clasificacion):
+    colores = {
+        "Muy bajo": "#d32f2f",
+        "Bajo": "#f57c00",
+        "Ligeramente bajo": "#fbc02d",
+        "Normal": "#388e3c",
+        "Bueno": "#1976d2",
+        "Muy bueno": "#00796b",
+        "Sin clasificar": "#757575"
+    }
+    return colores.get(clasificacion, "#757575")
+
+
+def rango_percentilar(percentil):
+    if percentil is None:
+        return "Sin rango"
+    if percentil < 3:
+        return "Menor a P3"
+    if percentil < 10:
+        return "Entre P3 y P10"
+    if percentil < 25:
+        return "Entre P10 y P25"
+    if percentil < 50:
+        return "Entre P25 y P50"
+    if percentil < 75:
+        return "Entre P50 y P75"
+    if percentil < 90:
+        return "Entre P75 y P90"
+    if percentil < 97:
+        return "Entre P90 y P97"
+    return "Mayor a P97"
+
+
+def interpretacion_clinica(clasificacion):
+    textos = {
+        "Muy bajo": "Resultado marcadamente por debajo del rango funcional esperado.",
+        "Bajo": "Resultado por debajo del rango funcional esperado.",
+        "Ligeramente bajo": "Resultado levemente inferior al rango esperado.",
+        "Normal": "Resultado dentro del rango funcional esperado.",
+        "Bueno": "Resultado superior al promedio esperado.",
+        "Muy bueno": "Resultado claramente superior al rango esperado."
+    }
+    return textos.get(clasificacion, "Sin interpretación disponible.")
+
+
+def interpolar_percentil(valor_medido, tabla_percentiles):
+    puntos = sorted(tabla_percentiles.items(), key=lambda x: x[1])
+
+    if valor_medido < puntos[0][1]:
+        return float(puntos[0][0])
+
+    if valor_medido > puntos[-1][1]:
+        return float(puntos[-1][0])
+
+    for i in range(len(puntos) - 1):
+        p1, v1 = puntos[i]
+        p2, v2 = puntos[i + 1]
 
         if v1 <= valor_medido <= v2:
             if v2 == v1:
-                p_est = p1
-            else:
-                p_est = p1 + ((valor_medido - v1) / (v2 - v1)) * (p2 - p1)
+                return float(p1)
+            return float(p1 + (valor_medido - v1) * (p2 - p1) / (v2 - v1))
 
-            texto = f"Percentil estimado: P{p_est:.1f}"
-            rango = f"Entre P{formatear_percentil(p1)} y P{formatear_percentil(p2)}"
-            return p_est, texto, rango
-
-    return None, "No se pudo estimar el percentil.", None
+    return None
 
 
-def mostrar_semaforo(p):
-    color = obtener_color_percentil(p)
-    etiqueta = obtener_etiqueta_semaforo(p)
-
-    st.markdown(
-        f"""
-        <div style="
-            background-color:{color};
-            color:white;
-            padding:14px 18px;
-            border-radius:10px;
-            font-weight:700;
-            margin-top:8px;
-            margin-bottom:12px;
-            text-align:center;
-            font-size:18px;">
-            {etiqueta}
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+def grupo_edad_prension(edad):
+    edad = int(edad)
+    if edad >= 100:
+        return "+100"
+    inicio = max(20, min(95, 20 + ((edad - 20) // 5) * 5))
+    fin = inicio + 4
+    return f"{inicio}-{fin}"
 
 
-# =========================
-# Carga de datos
-# =========================
-@st.cache_data
-def cargar_caminata():
-    df = pd.read_csv("caminata_6min_long.csv")
-    df = normalizar_columnas(df)
-
-    col_altura = buscar_columna(df, ["altura_cm", "altura", "talla", "height"], fallback_index=0)
-    col_edad = buscar_columna(df, ["edad_anos", "edad", "anos", "age"], fallback_index=1)
-    col_percentil = buscar_columna(df, ["percentil", "percentil_ref", "p"], fallback_index=2)
-    col_resultado = buscar_columna(df, ["distancia_m", "distancia", "metros", "resultado"], fallback_index=3)
-
-    df = convertir_numerico(df, [col_altura, col_edad, col_percentil, col_resultado])
-    df = df.dropna(subset=[col_altura, col_edad, col_percentil, col_resultado])
-
-    return df, {"altura": col_altura, "edad": col_edad, "percentil": col_percentil, "resultado": col_resultado}
+def grupo_edad_silla(edad):
+    edad = int(edad)
+    if edad >= 85:
+        return "+84"
+    if 65 <= edad <= 69:
+        return "65-69"
+    if 70 <= edad <= 74:
+        return "70-74"
+    if 75 <= edad <= 79:
+        return "75-79"
+    if 80 <= edad <= 84:
+        return "80-84"
+    return None
 
 
-@st.cache_data
-def cargar_prension():
-    df = pd.read_csv("prension_manual_long.csv")
-    df = normalizar_columnas(df)
+def calcular_resultado(prueba, sexo, edad, altura, valor_medido):
+    sexo = str(sexo).strip()
+    edad = int(edad)
+    valor_medido = float(valor_medido)
 
-    col_sexo = buscar_columna(df, ["sexo", "genero", "sex"], fallback_index=0)
-    col_edad = buscar_columna(df, ["edad_rango", "edad", "edad_anos", "anos", "age"], fallback_index=1)
-    col_percentil = buscar_columna(df, ["percentil", "percentil_ref", "p"], fallback_index=2)
-    col_resultado = buscar_columna(df, ["fuerza_kg", "fuerza", "kg", "prension", "prension_kg"], fallback_index=3)
+    if prueba == "Caminata 6 minutos":
+        altura = int(altura)
+        altura_ref = min(TABLA_CAMINATA_6M.keys(), key=lambda x: abs(x - altura))
+        edad_ref = min(TABLA_CAMINATA_6M[altura_ref].keys(), key=lambda x: abs(x - edad))
 
-    df[col_sexo] = normalizar_sexo_serie(df[col_sexo])
-    df[col_edad] = df[col_edad].astype(str).str.strip()
-    df = convertir_numerico(df, [col_percentil, col_resultado])
-    df = df.dropna(subset=[col_percentil, col_resultado])
+        percentiles = TABLA_CAMINATA_6M[altura_ref][edad_ref]
+        percentil_estimado = interpolar_percentil(valor_medido, percentiles)
 
-    return df, {"sexo": col_sexo, "edad": col_edad, "percentil": col_percentil, "resultado": col_resultado}
+        if percentil_estimado is None:
+            return None, "Sin clasificar", "-", "-", "-"
 
+        percentil_estimado = round(percentil_estimado, 1)
+        clasificacion = clasificar_percentil(percentil_estimado)
+        referencia_p50 = percentiles[50]
 
-@st.cache_data
-def cargar_silla():
-    df = pd.read_csv("silla_long.csv")
-    df = normalizar_columnas(df)
+        return (
+            percentil_estimado,
+            clasificacion,
+            f"{referencia_p50} m",
+            f"Altura ref.: {altura_ref} cm",
+            f"Edad ref.: {edad_ref} años"
+        )
 
-    col_sexo = buscar_columna(df, ["sexo", "genero", "sex"], fallback_index=0)
-    col_grupo = buscar_columna(df, ["grupo_edad", "grupoedad", "grupo", "ag"], fallback_index=1)
-    col_percentil = buscar_columna(df, ["percentil", "percentil_ref", "p"], fallback_index=4)
-    col_resultado = buscar_columna(df, ["valor_repeticiones", "repeticiones", "resultado", "levantadas"], fallback_index=5)
+    if prueba == "Prensión manual":
+        grupo = grupo_edad_prension(edad)
+        percentiles = TABLA_PRENSION[sexo][grupo]
+        percentil_estimado = interpolar_percentil(valor_medido, percentiles)
 
-    df[col_sexo] = normalizar_sexo_serie(df[col_sexo])
-    df[col_grupo] = df[col_grupo].astype(str).str.strip().str.upper()
-    df = convertir_numerico(df, [col_percentil, col_resultado])
-    df = df.dropna(subset=[col_percentil, col_resultado])
+        if percentil_estimado is None:
+            return None, "Sin clasificar", "-", "-", "-"
 
-    return df, {"sexo": col_sexo, "grupo": col_grupo, "percentil": col_percentil, "resultado": col_resultado}
+        percentil_estimado = round(percentil_estimado, 1)
+        clasificacion = clasificar_percentil(percentil_estimado)
+        referencia_p50 = percentiles[50]
 
+        return (
+            percentil_estimado,
+            clasificacion,
+            f"{referencia_p50} kg",
+            "-",
+            f"Grupo etario: {grupo}"
+        )
 
-# =========================
-# Interfaz
-# =========================
+    if prueba == "Levantarse de la silla":
+        grupo = grupo_edad_silla(edad)
+
+        if grupo is None:
+            return None, "Sin clasificar", "-", "-", "Edad fuera del rango de la tabla (65+ años)"
+
+        percentiles = TABLA_SILLA[sexo][grupo]
+        percentil_estimado = interpolar_percentil(valor_medido, percentiles)
+
+        if percentil_estimado is None:
+            return None, "Sin clasificar", "-", "-", "-"
+
+        percentil_estimado = round(percentil_estimado, 1)
+        clasificacion = clasificar_percentil(percentil_estimado)
+        referencia_p50 = percentiles[50]
+
+        return (
+            percentil_estimado,
+            clasificacion,
+            f"{referencia_p50} rep",
+            "-",
+            f"Grupo etario: {grupo}"
+        )
+
+    return None, "Sin clasificar", "-", "-", "-"
+
+# =========================================================
+# UI
+# =========================================================
 st.title("Calculadora de Condición Física")
 
-prueba = st.selectbox(
-    "Seleccionar prueba",
-    ["Caminata 6 minutos", "Fuerza prensión", "Levantarse de silla"]
-)
+with st.expander("➕ Nuevo paciente"):
+    nuevo_nombre = st.text_input("Nombre del nuevo paciente", key="nuevo_nombre_alta")
+    nuevo_sexo = st.selectbox("Sexo del nuevo paciente", ["hombre", "mujer"], key="nuevo_sexo_alta")
+    nueva_talla = st.number_input(
+        "Talla (m)",
+        min_value=0.50,
+        max_value=2.50,
+        value=1.70,
+        step=0.01,
+        format="%.2f",
+        key="nueva_talla_alta"
+    )
 
-if prueba == "Caminata 6 minutos":
-    df, cols = cargar_caminata()
-
-    edades = sorted(df[cols["edad"]].dropna().astype(int).unique().tolist())
-    alturas = sorted(df[cols["altura"]].dropna().astype(int).unique().tolist())
-
-    edad = st.selectbox("Edad", edades)
-    altura = st.selectbox("Altura (cm)", alturas)
-    valor_medido = st.number_input("Distancia caminada (metros)", min_value=0.0, value=451.0, step=1.0)
-
-    ref = df[(df[cols["edad"]] == edad) & (df[cols["altura"]] == altura)].copy()
-
-    if ref.empty:
-        st.warning("No hay datos de referencia para esa combinación.")
-    else:
-        p50 = ref.loc[ref[cols["percentil"]] == 50, cols["resultado"]]
-        p50_texto = f"{float(p50.iloc[0]):.0f} m" if not p50.empty else "No disponible"
-
-        p_est, texto_p, rango_p = estimar_percentil(valor_medido, ref, cols["resultado"], cols["percentil"])
-
-        mostrar_semaforo(p_est)
-        st.success(texto_p)
-        if rango_p:
-            st.write(f"**Rango percentilar:** {rango_p}")
-        st.write(f"**Referencia P50:** {p50_texto}")
-        st.write(f"**Interpretación clínica:** {interpretar_clinicamente(p_est, prueba)}")
-
-elif prueba == "Fuerza prensión":
-    df, cols = cargar_prension()
-
-    sexo_ui = st.selectbox("Sexo", ["Hombre", "Mujer"])
-    sexo = formatear_sexo_ui(sexo_ui)
-    edad = st.number_input("Edad", min_value=20, max_value=110, value=60, step=1)
-    fuerza_medida = st.number_input("Fuerza medida (kg)", min_value=0.0, value=25.0, step=0.1)
-
-    rangos = sorted(df[cols["edad"]].dropna().astype(str).unique().tolist())
-    rango_edad = buscar_rango_edad_prension(edad, rangos)
-
-    if rango_edad is None:
-        st.warning("No hay un rango de edad válido para esa edad.")
-    else:
-        ref = df[(df[cols["sexo"]] == sexo) & (df[cols["edad"]].astype(str) == str(rango_edad))].copy()
-
-        if ref.empty:
-            st.warning("No hay datos de referencia para esa combinación.")
+    if st.button("Guardar paciente", key="btn_guardar_paciente"):
+        if not nuevo_nombre.strip():
+            st.warning("Ingresá el nombre del paciente.")
         else:
-            p50 = ref.loc[ref[cols["percentil"]] == 50, cols["resultado"]]
-            p50_texto = f"{float(p50.iloc[0]):.1f} kg" if not p50.empty else "No disponible"
+            try:
+                guardar_paciente(nuevo_nombre, nuevo_sexo, nueva_talla)
+                st.success("Paciente agregado correctamente.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error al guardar paciente: {e}")
 
-            p_est, texto_p, rango_p = estimar_percentil(fuerza_medida, ref, cols["resultado"], cols["percentil"])
+pacientes = obtener_pacientes()
+opciones_pacientes = [p["nombre"] for p in pacientes]
 
-            mostrar_semaforo(p_est)
-            st.success(texto_p)
-            if rango_p:
-                st.write(f"**Rango percentilar:** {rango_p}")
-            st.write(f"**Rango de edad utilizado:** {rango_edad}")
-            st.write(f"**Referencia P50:** {p50_texto}")
-            st.write(f"**Interpretación clínica:** {interpretar_clinicamente(p_est, prueba)}")
+if not opciones_pacientes:
+    st.warning("No hay pacientes cargados. Agregá uno desde '➕ Nuevo paciente'.")
+    st.stop()
 
-elif prueba == "Levantarse de silla":
-    df, cols = cargar_silla()
+# =========================================================
+# ENCABEZADO
+# =========================================================
+top1, top2, top3 = st.columns([2, 1, 1])
 
-    sexo_ui = st.selectbox("Sexo", ["Hombre", "Mujer"])
-    sexo = formatear_sexo_ui(sexo_ui)
-    edad = st.number_input("Edad", min_value=65, max_value=110, value=70, step=1)
-    repeticiones = st.number_input("Repeticiones realizadas", min_value=0.0, value=11.0, step=1.0)
+with top1:
+    paciente_nombre = st.selectbox(
+        "Seleccionar paciente",
+        opciones_pacientes,
+        key="selector_paciente"
+    )
 
-    grupo = edad_a_grupo_silla(edad)
+paciente_actual = next((p for p in pacientes if p["nombre"] == paciente_nombre), None)
+paciente_id = paciente_actual["id"] if paciente_actual else None
 
-    if grupo is None:
-        st.warning("No hay grupo etario válido para esa edad.")
-    else:
-        ref = df[(df[cols["sexo"]] == sexo) & (df[cols["grupo"]] == grupo)].copy()
+# =========================================================
+# FICHA + DATAFRAMES BASE
+# =========================================================
+ficha = obtener_ficha_paciente(paciente_nombre)
+df_peso_export = obtener_historial_peso(paciente_id) if paciente_id is not None else pd.DataFrame()
+df_inbody_export = obtener_historial_inbody(paciente_id) if paciente_id is not None else pd.DataFrame()
+df_eval_export = obtener_historial_paciente(paciente_nombre) if paciente_nombre else pd.DataFrame()
 
-        if ref.empty:
-            st.warning("No hay datos de referencia para esa combinación.")
+excel_buffer = generar_excel_paciente(ficha, df_peso_export, df_inbody_export, df_eval_export)
+pdf_buffer = generar_pdf_paciente(ficha, df_peso_export, df_inbody_export, df_eval_export)
+
+with top2:
+    st.download_button(
+        label="Descargar Excel",
+        data=excel_buffer.getvalue(),
+        file_name=f"{paciente_nombre.replace(' ', '_')}_reporte.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key=f"descargar_excel_{paciente_id}"
+    )
+
+with top3:
+    st.download_button(
+        label="Descargar PDF",
+        data=pdf_buffer.getvalue(),
+        file_name=f"{paciente_nombre.replace(' ', '_')}_reporte.pdf",
+        mime="application/pdf",
+        key=f"descargar_pdf_{paciente_id}"
+    )
+
+st.divider()
+
+# =========================================================
+# TARJETAS RESUMEN
+# =========================================================
+k1, k2, k3, k4 = st.columns(4)
+
+with k1:
+    with st.container(border=True):
+        st.markdown("#### Paciente")
+        st.write(f"**Nombre:** {ficha['nombre']}")
+        st.write(f"**Sexo:** {str(ficha['sexo']).capitalize() if ficha['sexo'] != '-' else '-'}")
+        if ficha["talla_m"] is not None:
+            st.write(f"**Talla:** {float(ficha['talla_m']):.2f} m")
         else:
-            p50 = ref.loc[ref[cols["percentil"]] == 50, cols["resultado"]]
-            p50_texto = f"{float(p50.iloc[0]):.0f}" if not p50.empty else "No disponible"
+            st.write("**Talla:** -")
 
-            p_est, texto_p, rango_p = estimar_percentil(repeticiones, ref, cols["resultado"], cols["percentil"])
+with k2:
+    with st.container(border=True):
+        st.markdown("#### Peso / IMC")
+        if not df_peso_export.empty:
+            df_peso_tmp = df_peso_export.copy()
+            df_peso_tmp["fecha"] = pd.to_datetime(df_peso_tmp["fecha"], errors="coerce")
+            df_peso_tmp = df_peso_tmp.dropna(subset=["fecha"]).sort_values("fecha", ascending=False)
+            ultimo_peso = df_peso_tmp.iloc[0]
+            st.write(f"**Peso:** {float(ultimo_peso['peso_kg']):.1f} kg")
+            st.write(f"**IMC:** {float(ultimo_peso['imc']):.2f}")
+            st.write(f"**Fecha:** {ultimo_peso['fecha'].strftime('%d-%m-%Y')}")
+        else:
+            st.write("Sin registros")
 
-            mostrar_semaforo(p_est)
-            st.success(texto_p)
-            if rango_p:
-                st.write(f"**Rango percentilar:** {rango_p}")
-            st.write(f"**Grupo de edad utilizado:** {grupo}")
-            st.write(f"**Referencia P50:** {p50_texto} repeticiones")
-            st.write(f"**Interpretación clínica:** {interpretar_clinicamente(p_est, prueba)}")
+with k3:
+    with st.container(border=True):
+        st.markdown("#### Estado corporal")
+        if not df_inbody_export.empty and ficha["talla_m"] is not None:
+            df_corporal_tmp = df_inbody_export.copy()
+            df_corporal_tmp["fecha"] = pd.to_datetime(df_corporal_tmp["fecha"], errors="coerce")
+            df_corporal_tmp = df_corporal_tmp.dropna(subset=["fecha"]).sort_values("fecha", ascending=False)
+            ultimo_corporal = df_corporal_tmp.iloc[0]
 
+            resultado_resumen = evaluar_perfil_morfofuncional(
+                sexo=str(ficha["sexo"]).strip().lower(),
+                peso_kg=ultimo_corporal.get("peso_kg", 0),
+                talla_m=ficha["talla_m"],
+                grasa_pct=ultimo_corporal.get("grasa_corporal_pct", 0),
+                masa_muscular_kg=ultimo_corporal.get("masa_muscular_kg", 0),
+                agua_pct=ultimo_corporal.get("agua_corporal_pct", 0),
+                grasa_visceral=ultimo_corporal.get("grasa_visceral", 0)
+            )
+
+            st.write(f"**Estado:** {resultado_resumen['estado']}")
+            st.write(f"**Grasa:** {resultado_resumen['clasif_grasa']}")
+            st.write(f"**Músculo:** {resultado_resumen['clasif_musculo']}")
+        else:
+            st.write("Sin registros")
+
+with k4:
+    with st.container(border=True):
+        st.markdown("#### Última evaluación")
+        st.write(f"**Fecha:** {ficha['ultima_fecha']}")
+        st.write(f"**Prueba:** {ficha['ultima_prueba']}")
+        st.write(f"**Clasificación:** {ficha['ultima_clasificacion']}")
+
+st.divider()
+
+# =========================================================
+# ZONA PRINCIPAL DE TRABAJO
+# =========================================================
+left, right = st.columns([1, 1])
+
+with left:
+    st.markdown("## Peso e IMC")
+
+    with st.container(border=True):
+        if ficha["talla_m"] is None or float(ficha["talla_m"]) <= 0:
+            st.warning("Este paciente no tiene una talla válida cargada en la tabla pacientes.")
+        else:
+            col_p1, col_p2, col_p3 = st.columns(3)
+
+            with col_p1:
+                fecha_peso = st.date_input(
+                    "Fecha de peso",
+                    value=date.today(),
+                    key=f"fecha_peso_{paciente_id}"
+                )
+
+            with col_p2:
+                peso_kg = st.number_input(
+                    "Peso (kg)",
+                    min_value=0.0,
+                    max_value=300.0,
+                    value=70.0,
+                    step=0.1,
+                    format="%.1f",
+                    key=f"peso_kg_{paciente_id}"
+                )
+
+            with col_p3:
+                imc_calculado = round(float(peso_kg) / (float(ficha["talla_m"]) ** 2), 2)
+                clasificacion_imc, color_imc = clasificar_imc(imc_calculado)
+                st.markdown(f"**IMC:** {imc_calculado:.2f}")
+                st.markdown(f"**Clasificación:** {color_imc} {clasificacion_imc}")
+
+            if st.button("Guardar peso", key=f"btn_guardar_peso_{paciente_id}"):
+                try:
+                    guardar_peso(
+                        paciente_id=paciente_id,
+                        fecha_medicion=fecha_peso,
+                        peso_kg=peso_kg,
+                        talla_m=ficha["talla_m"]
+                    )
+                    st.success("Peso guardado correctamente.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error al guardar peso: {e}")
+
+    st.markdown("## Composición corporal")
+
+    with st.container(border=True):
+        if ficha["talla_m"] is None or float(ficha["talla_m"]) <= 0:
+            st.warning("Para cargar composición corporal primero hay que tener una talla válida en el paciente.")
+        else:
+            sexo_corporal = str(ficha["sexo"]).strip().lower()
+
+            col_c1, col_c2 = st.columns(2)
+
+            with col_c1:
+                fecha_inbody = st.date_input("Fecha estudio", value=date.today(), key=f"inbody_fecha_{paciente_id}")
+                peso_inbody = st.number_input("Peso (kg)", min_value=0.0, max_value=300.0, step=0.1, key=f"inbody_peso_{paciente_id}")
+                imc_inbody_calc = round(float(peso_inbody) / (float(ficha["talla_m"]) ** 2), 2) if peso_inbody and ficha["talla_m"] else 0.0
+                st.markdown(f"**IMC calculado:** {imc_inbody_calc:.2f}")
+                grasa_pct = st.number_input("% grasa corporal", min_value=0.0, max_value=80.0, step=0.1, key=f"inbody_grasa_{paciente_id}")
+
+            with col_c2:
+                masa_muscular = st.number_input("Masa muscular (kg)", min_value=0.0, max_value=100.0, step=0.1, key=f"inbody_musculo_{paciente_id}")
+                agua_pct = st.number_input("% agua corporal", min_value=0.0, max_value=100.0, step=0.1, key=f"inbody_agua_{paciente_id}")
+                grasa_visceral = st.number_input("Grasa visceral", min_value=0.0, max_value=30.0, step=0.1, key=f"inbody_visceral_{paciente_id}")
+                metabolismo = st.number_input("Metabolismo basal", min_value=0.0, max_value=4000.0, step=10.0, key=f"inbody_metabolismo_{paciente_id}")
+
+            observaciones_inbody = st.text_area("Observaciones", key=f"inbody_obs_{paciente_id}")
+
+            resultado_corporal = evaluar_perfil_morfofuncional(
+                sexo=sexo_corporal,
+                peso_kg=peso_inbody,
+                talla_m=ficha["talla_m"],
+                grasa_pct=grasa_pct,
+                masa_muscular_kg=masa_muscular,
+                agua_pct=agua_pct,
+                grasa_visceral=grasa_visceral
+            )
+
+            bg_estado, fg_estado = color_estado_corporal(resultado_corporal["estado"])
+
+            st.markdown(
+                f"""
+                <div class="result-card" style="background-color:{bg_estado}; color:{fg_estado};">
+                    Estado corporal: {resultado_corporal["estado"]}
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+            col_r1, col_r2, col_r3 = st.columns(3)
+            with col_r1:
+                st.write(f"**IMC:** {resultado_corporal['imc'] if resultado_corporal['imc'] is not None else '-'}")
+                st.write(f"**Clasificación IMC:** {resultado_corporal['clasif_imc']}")
+                st.write(f"**% grasa:** {resultado_corporal['clasif_grasa']}")
+
+            with col_r2:
+                st.write(f"**% agua corporal:** {resultado_corporal['clasif_agua']}")
+                st.write(f"**Grasa visceral:** {resultado_corporal['clasif_visceral']}")
+                st.write(f"**Músculo relativo %:** {resultado_corporal['musculo_rel_pct'] if resultado_corporal['musculo_rel_pct'] is not None else '-'}")
+
+            with col_r3:
+                st.write(f"**Clasificación muscular:** {resultado_corporal['clasif_musculo']}")
+                st.write(f"**Metabolismo basal:** {metabolismo if metabolismo is not None else '-'}")
+                st.write(f"**Sexo de referencia:** {sexo_corporal.capitalize() if sexo_corporal else '-'}")
+
+            motivos_texto = resultado_corporal["motivos"] if resultado_corporal["motivos"] else ["Sin hallazgos relevantes"]
+            motivos_html = "".join([f"<li>{m}</li>" for m in motivos_texto])
+
+            st.markdown(
+                f"""
+                <div class="motivo-box">
+                    <b>Motivos:</b>
+                    <ul style="margin-top:8px; margin-bottom:0;">
+                        {motivos_html}
+                    </ul>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+            st.markdown(
+                f"""
+                <div class="reco-box">
+                    <b>Recomendación:</b><br>
+                    {resultado_corporal["recomendacion"]}
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+            if st.button("Guardar composición corporal", key=f"guardar_inbody_{paciente_id}"):
+                try:
+                    guardar_inbody(
+                        paciente_id=paciente_id,
+                        fecha_estudio=fecha_inbody,
+                        peso_kg=peso_inbody,
+                        talla_m=ficha["talla_m"],
+                        grasa_corporal_pct=grasa_pct,
+                        masa_muscular_kg=masa_muscular,
+                        agua_corporal_pct=agua_pct,
+                        grasa_visceral=grasa_visceral,
+                        metabolismo_basal=metabolismo,
+                        observaciones=observaciones_inbody
+                    )
+                    st.success("Composición corporal guardada correctamente")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error al guardar composición corporal: {e}")
+
+with right:
+    st.markdown("## Evaluación funcional")
+
+    with st.container(border=True):
+        paciente_sexo_guardado = next((p["sexo"] for p in pacientes if p["nombre"] == paciente_nombre), None)
+
+        prueba = st.selectbox(
+            "Seleccionar prueba",
+            ["Caminata 6 minutos", "Prensión manual", "Levantarse de la silla"],
+            key="selector_prueba"
+        )
+
+        sexo_default = "Hombre"
+        if paciente_sexo_guardado == "mujer":
+            sexo_default = "Mujer"
+        elif paciente_sexo_guardado == "hombre":
+            sexo_default = "Hombre"
+
+        sexo = st.selectbox(
+            "Sexo",
+            ["Hombre", "Mujer"],
+            index=0 if sexo_default == "Hombre" else 1,
+            key="selector_sexo"
+        )
+
+        altura = None
+        valor_medido = None
+
+        if prueba == "Caminata 6 minutos":
+            edad = st.selectbox("Edad", list(range(40, 81)), index=20, key="edad_caminata")
+            altura = st.selectbox("Altura (cm)", [150, 160, 170, 180, 190], index=2, key="altura_caminata")
+            valor_medido = st.number_input(
+                "Distancia caminada (metros)",
+                min_value=0.0,
+                max_value=2000.0,
+                value=600.0,
+                step=1.0,
+                format="%.2f",
+                key="valor_caminata"
+            )
+
+        elif prueba == "Prensión manual":
+            edad = st.selectbox("Edad", list(range(20, 101)), index=45, key="edad_prension")
+            valor_medido = st.number_input(
+                "Fuerza de prensión (kg)",
+                min_value=0.0,
+                max_value=100.0,
+                value=25.0,
+                step=0.1,
+                format="%.1f",
+                key="valor_prension"
+            )
+
+        elif prueba == "Levantarse de la silla":
+            edad = st.selectbox("Edad", list(range(65, 101)), index=10, key="edad_silla")
+            valor_medido = st.number_input(
+                "Cantidad de repeticiones",
+                min_value=0.0,
+                max_value=60.0,
+                value=12.0,
+                step=1.0,
+                format="%.0f",
+                key="valor_silla"
+            )
+
+        percentil, clasificacion, referencia_p50, referencia_altura, referencia_edad = calcular_resultado(
+            prueba=prueba,
+            sexo=sexo,
+            edad=edad,
+            altura=altura,
+            valor_medido=valor_medido
+        )
+
+        color = color_clasificacion(clasificacion)
+
+        st.markdown(
+            f"""
+            <div style="
+                background-color:{color};
+                color:white;
+                padding:10px 12px;
+                border-radius:8px;
+                text-align:center;
+                font-size:18px;
+                font-weight:600;
+                margin-top:18px;
+                margin-bottom:10px;
+            ">
+                {clasificacion}
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        st.markdown(
+            f"""
+            <div style="
+                background-color:#dff0e6;
+                color:#1b5e20;
+                padding:8px 12px;
+                border-radius:8px;
+                font-size:15px;
+                margin-bottom:14px;
+            ">
+                Percentil estimado: <b>P{percentil if percentil is not None else "-"}</b>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        st.write(f"**Rango percentilar:** {rango_percentilar(percentil)}")
+        st.write(f"**Referencia P50:** {referencia_p50}")
+
+        if referencia_altura != "-":
+            st.write(f"**Referencia de altura:** {referencia_altura}")
+
+        if referencia_edad != "-":
+            st.write(f"**Referencia etaria:** {referencia_edad}")
+
+        st.write(f"**Interpretación clínica:** {interpretacion_clinica(clasificacion)}")
+
+        if st.button("Guardar evaluación", key="btn_guardar_evaluacion"):
+            if not paciente_nombre:
+                st.warning("Seleccioná un paciente antes de guardar.")
+            elif percentil is None:
+                st.warning("No se pudo calcular el percentil.")
+            else:
+                try:
+                    guardar_evaluacion(
+                        paciente_nombre=paciente_nombre,
+                        sexo=sexo,
+                        edad=edad,
+                        prueba=prueba,
+                        valor_medido=valor_medido,
+                        percentil=percentil,
+                        clasificacion=clasificacion
+                    )
+                    st.success("Evaluación guardada correctamente.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error al guardar: {e}")
+
+st.divider()
+
+# =========================================================
+# HISTORIALES
+# =========================================================
+h1, h2 = st.columns([1, 1])
+
+with h1:
+    st.markdown("## Historial corporal")
+
+    df_inbody = obtener_historial_inbody(paciente_id)
+    if not df_inbody.empty:
+        df_inbody["fecha"] = pd.to_datetime(df_inbody["fecha"], errors="coerce")
+        df_inbody = df_inbody.dropna(subset=["fecha"]).sort_values("fecha", ascending=False)
+
+        df_inbody_mostrar = df_inbody.copy()
+        df_inbody_mostrar["fecha"] = df_inbody_mostrar["fecha"].dt.strftime("%Y-%m-%d")
+
+        columnas_inbody = [
+            "fecha",
+            "peso_kg",
+            "imc",
+            "grasa_corporal_pct",
+            "masa_muscular_kg",
+            "agua_corporal_pct",
+            "grasa_visceral",
+            "metabolismo_basal",
+            "observaciones"
+        ]
+        columnas_inbody = [c for c in columnas_inbody if c in df_inbody_mostrar.columns]
+
+        st.dataframe(
+            df_inbody_mostrar[columnas_inbody],
+            use_container_width=True,
+            hide_index=True
+        )
+    else:
+        st.info("Sin historial corporal.")
+
+with h2:
+    st.markdown("## Historial funcional")
+
+    df_historial = obtener_historial_paciente(paciente_nombre)
+
+    if not df_historial.empty:
+        prueba_filtro = st.selectbox(
+            "Filtrar historial por prueba",
+            options=["Todas", "Caminata 6 minutos", "Prensión manual", "Levantarse de la silla"],
+            index=0,
+            key="filtro_historial_prueba"
+        )
+
+        if prueba_filtro == "Todas":
+            df_historial_filtrado = df_historial.copy()
+        else:
+            df_historial_filtrado = df_historial[
+                df_historial["prueba"].astype(str).str.strip() == prueba_filtro
+            ].copy()
+
+        columnas_mostrar = ["id", "fecha", "prueba", "valor_medido", "percentil", "clasificacion"]
+        columnas_existentes = [c for c in columnas_mostrar if c in df_historial_filtrado.columns]
+        df_historial_mostrar = df_historial_filtrado[columnas_existentes].copy()
+
+        if "fecha" in df_historial_mostrar.columns:
+            df_historial_mostrar["fecha"] = pd.to_datetime(
+                df_historial_mostrar["fecha"],
+                errors="coerce"
+            ).dt.strftime("%Y-%m-%d")
+
+        df_historial_mostrar = df_historial_mostrar.sort_values(by="fecha", ascending=False)
+
+        st.markdown("**Fecha | Prueba | Valor | Percentil | Clasificación | Eliminar**")
+
+        for _, row in df_historial_mostrar.iterrows():
+            c1, c2, c3, c4, c5, c6 = st.columns([1, 2, 1, 1, 1, 0.5])
+
+            c1.write(row.get("fecha", ""))
+            c2.write(row.get("prueba", ""))
+            c3.write(row.get("valor_medido", ""))
+            c4.write(row.get("percentil", ""))
+            c5.write(row.get("clasificacion", ""))
+
+            if c6.button("🗑", key=f"del_{row['id']}"):
+                try:
+                    eliminar_evaluacion(row["id"])
+                    st.success("Evaluación eliminada.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error al eliminar: {e}")
+    else:
+        st.info("Sin historial funcional.")
+
+st.divider()
+
+# =========================================================
+# GRÁFICOS
+# =========================================================
+st.markdown("## Gráficos")
+
+g1, g2 = st.columns([1, 1])
+
+with g1:
+    st.markdown("### Evolución de peso e IMC")
+
+    if paciente_id is not None:
+        df_peso = obtener_historial_peso(paciente_id)
+
+        if not df_peso.empty:
+            df_peso["fecha"] = pd.to_datetime(df_peso["fecha"], errors="coerce")
+            df_peso["peso_kg"] = pd.to_numeric(df_peso["peso_kg"], errors="coerce")
+            df_peso["imc"] = pd.to_numeric(df_peso["imc"], errors="coerce")
+            df_peso = df_peso.dropna(subset=["fecha", "peso_kg", "imc"]).sort_values("fecha", ascending=True)
+
+            grafico_doble = alt.Chart(df_peso).transform_fold(
+                ["peso_kg", "imc"],
+                as_=["variable", "valor"]
+            ).mark_line(point=True).encode(
+                x=alt.X("yearmonthdate(fecha):T", title="Fecha"),
+                y=alt.Y("valor:Q", title="Valor"),
+                color=alt.Color("variable:N", title="Serie"),
+                tooltip=[
+                    alt.Tooltip("yearmonthdate(fecha):T", title="Fecha"),
+                    alt.Tooltip("variable:N", title="Serie"),
+                    alt.Tooltip("valor:Q", title="Valor", format=".2f")
+                ]
+            ).properties(height=320)
+
+            st.altair_chart(grafico_doble, use_container_width=True)
+        else:
+            st.info("Sin datos de peso / IMC.")
+
+with g2:
+    st.markdown("### Evolución del percentil funcional")
+
+    if paciente_nombre:
+        df_historial = obtener_historial_paciente(paciente_nombre)
+
+        if not df_historial.empty and {"fecha", "percentil", "prueba"}.issubset(df_historial.columns):
+            df_graf_base = df_historial.copy()
+            df_graf_base["fecha"] = pd.to_datetime(df_graf_base["fecha"], errors="coerce").dt.date
+            df_graf_base["percentil"] = pd.to_numeric(df_graf_base["percentil"], errors="coerce")
+            df_graf_base["prueba"] = df_graf_base["prueba"].astype(str).str.strip()
+            df_graf_base = df_graf_base.dropna(subset=["fecha", "percentil", "prueba"])
+
+            prueba_grafico = st.selectbox(
+                "Prueba para gráfico",
+                options=["Caminata 6 minutos", "Prensión manual", "Levantarse de la silla"],
+                key="selector_grafico_prueba"
+            )
+
+            df_prueba = df_graf_base[df_graf_base["prueba"] == prueba_grafico].copy()
+
+            if not df_prueba.empty:
+                df_prueba = (
+                    df_prueba.groupby("fecha", as_index=False)["percentil"]
+                    .mean()
+                    .sort_values("fecha")
+                )
+
+                df_prueba["Etiqueta"] = df_prueba["percentil"].apply(lambda x: f"P{round(x, 1)}")
+
+                linea = alt.Chart(df_prueba).mark_line(point=False).encode(
+                    x=alt.X(
+                        "yearmonthdate(fecha):T",
+                        title="Fecha",
+                        axis=alt.Axis(format="%d-%m-%Y")
+                    ),
+                    y=alt.Y("percentil:Q", title="Percentil")
+                )
+
+                puntos = alt.Chart(df_prueba).mark_circle(size=90).encode(
+                    x=alt.X("yearmonthdate(fecha):T"),
+                    y=alt.Y("percentil:Q")
+                )
+
+                etiquetas = alt.Chart(df_prueba).mark_text(
+                    dy=-12,
+                    fontSize=12
+                ).encode(
+                    x=alt.X("yearmonthdate(fecha):T"),
+                    y=alt.Y("percentil:Q"),
+                    text="Etiqueta:N"
+                )
+
+                grafico = (linea + puntos + etiquetas).properties(height=320)
+                st.altair_chart(grafico, use_container_width=True)
+
+                ultimo = df_prueba["percentil"].iloc[-1]
+                if len(df_prueba) >= 2:
+                    anterior = df_prueba["percentil"].iloc[-2]
+                    diferencia = round(ultimo - anterior, 1)
+
+                    if diferencia > 0:
+                        st.success(f"↑ Mejora de {diferencia} percentiles desde la evaluación anterior")
+                    elif diferencia < 0:
+                        st.warning(f"↓ Disminución de {abs(diferencia)} percentiles desde la evaluación anterior")
+                    else:
+                        st.info("Sin cambios respecto a la evaluación anterior")
+            else:
+                st.info("Sin datos funcionales para esa prueba.")
+        else:
+            st.info("Sin historial funcional para graficar.")
