@@ -83,19 +83,24 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-La app abre en `http://localhost:8501`. No requiere configuración, credenciales ni base
-de datos: las tablas normativas son los CSV del repositorio.
+La app abre en `http://localhost:8501`. **Para calcular percentiles no requiere
+configuración alguna**: las tablas normativas son los CSV del repositorio. El registro
+de evaluaciones es una función opcional que se activa con credenciales de Supabase (ver
+más abajo); sin ellas, todo lo demás funciona igual.
 
 ---
 
 ## Estructura del repositorio
 
 ```
-app.py                      Aplicación completa (UI + lógica de estimación)
-caminata_6min_long.csv      Normativa 6MWT   — altura × edad × percentil
-prension_manual_long.csv    Normativa fuerza — sexo × rango etario × percentil
-silla_long.csv              Normativa silla  — sexo × grupo etario × percentil
-requirements.txt            Dependencias
+app.py                          Aplicación completa (UI + estimación + persistencia)
+caminata_6min_long.csv          Normativa 6MWT   — altura × edad × percentil
+prension_manual_long.csv        Normativa fuerza — sexo × rango etario × percentil
+silla_long.csv                  Normativa silla  — sexo × grupo etario × percentil
+supabase_schema.sql             Esquema de la tabla de evaluaciones + RLS
+test_persistencia.py            Pruebas de la capa de persistencia
+.streamlit/secrets.toml.example Plantilla de credenciales (la real no se versiona)
+requirements.txt                Dependencias
 ```
 
 ### Formato de los CSV
@@ -114,34 +119,82 @@ alternativos, con respaldo posicional. Para **añadir o actualizar una normativa
 con editar el CSV respetando el formato long — no hace falta tocar `app.py`.
 
 ---
+## Registro de evaluaciones y seguimiento
 
-## Persistencia de evaluaciones (no implementada)
+La aplicación puede registrar cada evaluación en [Supabase](https://supabase.com/)
+para seguir la **evolución de un paciente entre visitas**, que es el valor real de
+persistir: un percentil aislado describe un momento; la serie describe una trayectoria.
 
-La aplicación **no guarda** los datos que se introducen: cada cálculo es efímero y no se
-registra información de pacientes en ningún lado.
+Es **opcional**. Sin credenciales configuradas la calculadora funciona íntegra y solo
+se desactiva el guardado, indicando el motivo en la barra lateral.
 
-Hubo un intento de integrar [Supabase](https://supabase.com/) (commit `18a18b8`) que
-definió una función de guardado pero nunca llegó a invocarse desde la interfaz, y fue
-revertido. La dependencia quedó huérfana en `requirements.txt` y se retiró.
+### Pseudonimización
 
-Si se retoma, el esquema previsto para la tabla `evaluaciones` era:
+El único identificador que se almacena es un **código de paciente** asignado por el
+profesional (`HC-1042`, por ejemplo). La aplicación no pide ni guarda nombre, DNI ni
+ningún dato identificativo directo: **la correspondencia entre código y persona debe
+quedar en la historia clínica, fuera de esta base de datos.**
 
-| Columna | Tipo |
+El código se normaliza a mayúsculas y sin espacios sobrantes, de modo que `hc-1042`,
+`HC-1042 ` y `Hc-1042` son el mismo paciente y el historial no se fragmenta por
+diferencias de tipeo.
+
+### Puesta en marcha
+
+1. Crear un proyecto en Supabase.
+2. Ejecutar [`supabase_schema.sql`](supabase_schema.sql) en el SQL Editor. Crea la tabla
+   `evaluaciones`, su índice y **activa Row Level Security sin políticas**: la tabla
+   queda cerrada hasta que se decida conscientemente quién accede. El archivo incluye
+   las dos políticas habituales, comentadas, con sus condiciones de uso.
+3. Copiar `.streamlit/secrets.toml.example` a `.streamlit/secrets.toml` y completar
+   `SUPABASE_URL` y `SUPABASE_KEY` con la clave **`anon`** del proyecto — no la
+   `service_role`, que ignora todas las políticas de RLS.
+4. `.streamlit/secrets.toml` está en `.gitignore`. No debe versionarse.
+
+### Uso
+
+- El **código de paciente** se introduce en la barra lateral y persiste al cambiar de
+  prueba: en una misma visita se pueden registrar las tres.
+- Tras cada resultado aparece **Registrar evaluación**, con un campo de observaciones
+  opcional.
+- El desplegable **Historial** muestra todas las evaluaciones del código, con una
+  columna **Δ** que compara cada una con la anterior *de la misma prueba*.
+
+La lectura clínica del Δ de percentil merece una nota: como el percentil se recalcula
+contra la referencia de la edad actual, **mantener el percentil no es estancarse**.
+Significa que el paciente envejece conservando su posición relativa, lo que en un
+seguimiento longitudinal ya es un resultado.
+
+### Qué se guarda
+
+| Columna | Contenido |
 |---|---|
-| `fecha` | date |
-| `paciente` | text |
-| `sexo` | text |
-| `edad` | int |
-| `prueba` | text |
-| `valor_medido` | float |
-| `percentilo` | float |
-| `clasificacion` | text |
+| `fecha`, `creado_en` | Fecha de la evaluación y sello de inserción |
+| `codigo_paciente` | Seudónimo. Nunca un dato identificativo directo |
+| `prueba`, `valor_medido`, `unidad` | Test realizado y resultado bruto |
+| `percentil`, `clasificacion` | Percentil estimado y franja del semáforo |
+| `edad`, `sexo`, `estrato` | Datos de estratificación y estrato normativo aplicado |
+| `observaciones` | Texto libre opcional |
 
-Reactivarlo requiere: volver a añadir `supabase` a `requirements.txt`, definir
-`SUPABASE_URL` y `SUPABASE_KEY` en `.streamlit/secrets.toml`, **añadir un campo de
-identificación de paciente a la interfaz** (hoy no existe) y llamar a la función de
-guardado desde cada rama de prueba.
+Dos campos son deliberadamente anulables:
 
-> Almacenar evaluaciones nominales convierte el proyecto en un tratamiento de datos de
-> salud. Antes de activarlo corresponde resolver base legal, consentimiento,
-> seudonimización, control de acceso y retención.
+- **`percentil` es `NULL`** cuando el valor cae fuera del rango tabulado y no pudo
+  estimarse. Preferimos el hueco explícito a un número inventado.
+- **`sexo` es `NULL`** en la caminata de 6 minutos, porque esa normativa estratifica por
+  altura y edad, no por sexo. Registrarlo igual sería sugerir un ajuste que no existe.
+
+### Pruebas
+
+```bash
+python3 test_persistencia.py
+```
+
+Sustituye el cliente de Supabase por uno en memoria y comprueba la normalización del
+código, el registro construido y el cálculo de deltas. No requiere credenciales ni red.
+
+### Protección de datos
+
+Registrar evaluaciones, aun seudonimizadas, constituye un **tratamiento de datos de
+salud**. La pseudonimización y la RLS reducen el riesgo pero no eximen de resolver base
+legal, información al paciente, control de acceso, plazo de conservación y ubicación del
+servidor. Es una decisión del responsable del tratamiento, no del software.

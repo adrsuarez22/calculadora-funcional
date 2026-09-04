@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import unicodedata
+from datetime import date
 
 st.set_page_config(page_title="Calculadora de condición Física", layout="centered")
 
@@ -256,6 +257,126 @@ def mostrar_semaforo(p):
 
 
 # =========================
+# Persistencia (Supabase)
+# =========================
+TABLA_EVALUACIONES = "evaluaciones"
+
+
+@st.cache_resource(show_spinner=False)
+def obtener_cliente_supabase():
+    """Devuelve (cliente, motivo_indisponibilidad).
+
+    Nunca lanza excepción: la calculadora debe seguir siendo utilizable
+    aunque no haya base de datos configurada. Si falta cualquier pieza,
+    devuelve (None, motivo) y la app funciona sin guardar.
+    """
+    try:
+        from supabase import create_client
+    except ImportError:
+        return None, "El paquete `supabase` no está instalado (`pip install -r requirements.txt`)."
+
+    try:
+        url = st.secrets["SUPABASE_URL"]
+        key = st.secrets["SUPABASE_KEY"]
+    except Exception:
+        return None, "Faltan `SUPABASE_URL` y `SUPABASE_KEY` en `.streamlit/secrets.toml`."
+
+    if not url or not key:
+        return None, "`SUPABASE_URL` o `SUPABASE_KEY` están vacíos."
+
+    try:
+        return create_client(url, key), None
+    except Exception as e:
+        return None, f"No se pudo inicializar el cliente de Supabase: {e}"
+
+
+def normalizar_codigo_paciente(codigo):
+    """El código es un seudónimo asignado por el profesional.
+
+    Se normaliza a mayúsculas sin espacios sobrantes para que 'ab-01',
+    'AB-01 ' y 'Ab-01' sean el mismo paciente y el historial no se
+    fragmente por diferencias de tipeo.
+    """
+    return " ".join(str(codigo).strip().upper().split())
+
+
+def guardar_evaluacion(codigo_paciente, prueba, valor_medido, unidad, percentil,
+                       clasificacion, edad, estrato, sexo=None, observaciones=""):
+    cliente, motivo = obtener_cliente_supabase()
+    if cliente is None:
+        return False, motivo
+
+    codigo = normalizar_codigo_paciente(codigo_paciente)
+    if not codigo:
+        return False, "Falta el código de paciente."
+
+    registro = {
+        "fecha": date.today().isoformat(),
+        "codigo_paciente": codigo,
+        "prueba": prueba,
+        "valor_medido": float(valor_medido),
+        "unidad": unidad,
+        # El percentil se guarda tal como se estimó, incluido el caso en que
+        # no pudo estimarse (NULL), para no simular una precisión inexistente.
+        "percentil": round(float(percentil), 1) if percentil is not None else None,
+        "clasificacion": clasificacion,
+        "edad": int(edad),
+        # La normativa de la caminata de 6 minutos no estratifica por sexo:
+        # en esa prueba el campo queda NULL, que es el dato honesto.
+        "sexo": sexo,
+        "estrato": estrato,
+        "observaciones": observaciones.strip() or None,
+    }
+
+    try:
+        cliente.table(TABLA_EVALUACIONES).insert(registro).execute()
+        return True, None
+    except Exception as e:
+        return False, f"No se pudo guardar la evaluación: {e}"
+
+
+def obtener_historial(codigo_paciente):
+    cliente, motivo = obtener_cliente_supabase()
+    if cliente is None:
+        return None, motivo
+
+    codigo = normalizar_codigo_paciente(codigo_paciente)
+    if not codigo:
+        return None, "Falta el código de paciente."
+
+    try:
+        respuesta = (
+            cliente.table(TABLA_EVALUACIONES)
+            .select("fecha, prueba, valor_medido, unidad, percentil, clasificacion, edad, estrato, observaciones")
+            .eq("codigo_paciente", codigo)
+            .order("fecha", desc=False)
+            .execute()
+        )
+        return pd.DataFrame(respuesta.data or []), None
+    except Exception as e:
+        return None, f"No se pudo consultar el historial: {e}"
+
+
+def calcular_deltas(df):
+    """Añade el cambio respecto de la evaluación previa de la misma prueba.
+
+    Es el valor clínico de persistir: no el registro aislado, sino la
+    trayectoria del paciente entre visitas.
+    """
+    df = df.sort_values(["prueba", "fecha"]).copy()
+    df["delta_valor"] = df.groupby("prueba")["valor_medido"].diff()
+    df["delta_percentil"] = df.groupby("prueba")["percentil"].diff()
+    return df
+
+
+def formatear_delta(valor, decimales=1, sufijo=""):
+    if pd.isna(valor):
+        return "—"
+    signo = "+" if valor > 0 else ""
+    return f"{signo}{valor:.{decimales}f}{sufijo}"
+
+
+# =========================
 # Carga de datos
 # =========================
 @st.cache_data
@@ -315,10 +436,37 @@ def cargar_silla():
 # =========================
 st.title("Calculadora de Condición Física")
 
+cliente_bd, motivo_sin_bd = obtener_cliente_supabase()
+persistencia_activa = cliente_bd is not None
+
+# --- Identificación del paciente (transversal a las tres pruebas) ---
+with st.sidebar:
+    st.header("Paciente")
+    codigo_paciente = st.text_input(
+        "Código de paciente",
+        value="",
+        placeholder="Ej.: HC-1042",
+        help=(
+            "Seudónimo asignado por el profesional. **No introducir nombre, DNI ni "
+            "ningún dato identificativo**: la correspondencia entre el código y la "
+            "persona debe quedar en la historia clínica, fuera de esta aplicación."
+        ),
+    ).strip()
+
+    if persistencia_activa:
+        st.caption("Registro de evaluaciones: **activo**")
+    else:
+        st.caption("Registro de evaluaciones: **desactivado**")
+        st.caption(motivo_sin_bd)
+
 prueba = st.selectbox(
     "Seleccionar prueba",
     ["Caminata 6 minutos", "Fuerza prensión", "Levantarse de silla"]
 )
+
+# Resultado de la evaluación en curso. Cada rama lo completa si pudo estimar
+# el percentil; queda en None si no hubo referencia aplicable.
+evaluacion = None
 
 if prueba == "Caminata 6 minutos":
     df, cols = cargar_caminata()
@@ -346,6 +494,17 @@ if prueba == "Caminata 6 minutos":
             st.write(f"**Rango percentilar:** {rango_p}")
         st.write(f"**Referencia P50:** {p50_texto}")
         st.write(f"**Interpretación clínica:** {interpretar_clinicamente(p_est, prueba)}")
+
+        evaluacion = {
+            "prueba": prueba,
+            "valor_medido": valor_medido,
+            "unidad": "m",
+            "percentil": p_est,
+            "clasificacion": obtener_etiqueta_semaforo(p_est),
+            "edad": edad,
+            "sexo": None,
+            "estrato": f"altura {altura} cm · edad {edad} años",
+        }
 
 elif prueba == "Fuerza prensión":
     df, cols = cargar_prension()
@@ -379,6 +538,17 @@ elif prueba == "Fuerza prensión":
             st.write(f"**Referencia P50:** {p50_texto}")
             st.write(f"**Interpretación clínica:** {interpretar_clinicamente(p_est, prueba)}")
 
+            evaluacion = {
+                "prueba": prueba,
+                "valor_medido": fuerza_medida,
+                "unidad": "kg",
+                "percentil": p_est,
+                "clasificacion": obtener_etiqueta_semaforo(p_est),
+                "edad": edad,
+                "sexo": sexo,
+                "estrato": f"{sexo} · {rango_edad} años",
+            }
+
 elif prueba == "Levantarse de silla":
     df, cols = cargar_silla()
 
@@ -409,3 +579,87 @@ elif prueba == "Levantarse de silla":
             st.write(f"**Grupo de edad utilizado:** {grupo}")
             st.write(f"**Referencia P50:** {p50_texto} repeticiones")
             st.write(f"**Interpretación clínica:** {interpretar_clinicamente(p_est, prueba)}")
+
+            evaluacion = {
+                "prueba": prueba,
+                "valor_medido": repeticiones,
+                "unidad": "repeticiones",
+                "percentil": p_est,
+                "clasificacion": obtener_etiqueta_semaforo(p_est),
+                "edad": edad,
+                "sexo": sexo,
+                "estrato": f"{sexo} · grupo {grupo} ({edad} años)",
+            }
+
+
+# =========================
+# Registro de la evaluación
+# =========================
+if evaluacion is not None and persistencia_activa:
+    st.divider()
+    st.subheader("Registrar evaluación")
+
+    if not codigo_paciente:
+        st.info(
+            "Introducí un **código de paciente** en la barra lateral para poder "
+            "registrar esta evaluación y seguir su evolución."
+        )
+    else:
+        with st.form("form_guardar", clear_on_submit=True):
+            observaciones = st.text_area(
+                "Observaciones (opcional)",
+                placeholder="Condiciones de la prueba, incidencias, medicación relevante…",
+            )
+            guardar = st.form_submit_button("Guardar evaluación")
+
+        if guardar:
+            ok, error = guardar_evaluacion(
+                codigo_paciente=codigo_paciente,
+                observaciones=observaciones,
+                **evaluacion,
+            )
+            if ok:
+                st.success(
+                    f"Evaluación registrada para **{normalizar_codigo_paciente(codigo_paciente)}** "
+                    f"({date.today().strftime('%d/%m/%Y')})."
+                )
+            else:
+                st.error(error)
+
+
+# =========================
+# Historial del paciente
+# =========================
+if persistencia_activa and codigo_paciente:
+    st.divider()
+    with st.expander(f"Historial de {normalizar_codigo_paciente(codigo_paciente)}", expanded=False):
+        historial, error = obtener_historial(codigo_paciente)
+
+        if error:
+            st.error(error)
+        elif historial is None or historial.empty:
+            st.info("Todavía no hay evaluaciones registradas con este código.")
+        else:
+            historial = calcular_deltas(historial)
+
+            tabla = pd.DataFrame({
+                "Fecha": historial["fecha"],
+                "Prueba": historial["prueba"],
+                "Resultado": [
+                    f"{v:.1f} {u}" for v, u in zip(historial["valor_medido"], historial["unidad"])
+                ],
+                "Δ resultado": [formatear_delta(d) for d in historial["delta_valor"]],
+                "Percentil": [
+                    "N/D" if pd.isna(p) else f"P{formatear_percentil(p)}" for p in historial["percentil"]
+                ],
+                "Δ percentil": [formatear_delta(d) for d in historial["delta_percentil"]],
+                "Clasificación": historial["clasificacion"],
+                "Observaciones": historial["observaciones"].fillna(""),
+            })
+
+            st.dataframe(tabla, hide_index=True, use_container_width=True)
+            st.caption(
+                "Δ compara cada evaluación con la anterior **de la misma prueba**. "
+                "Un cambio de percentil descuenta el efecto de la edad: si el percentil "
+                "se mantiene, el paciente envejece conservando su posición relativa."
+            )
